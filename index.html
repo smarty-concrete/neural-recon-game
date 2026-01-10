@@ -23,7 +23,9 @@
 
         html, body {
             width: 100%; height: 100%; margin: 0; padding: 0; overflow-x: hidden;
-            position: fixed; overscroll-behavior-y: contain; touch-action: none;
+            position: fixed; overscroll-behavior-y: contain; 
+            /* manipulation allows panning/scrolling but disables double-tap zoom */
+            touch-action: manipulation; 
             user-select: none; -webkit-user-select: none;
         }
 
@@ -43,6 +45,7 @@
             background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(0, 243, 255, 0.6);
             color: var(--neon-cyan); padding: 4px 10px; font-size: 10px; font-weight: 900;
             text-transform: uppercase; letter-spacing: 1px; transition: 0.2s; border-radius: 2px;
+            touch-action: manipulation;
         }
         .cyber-btn:hover { background: var(--neon-cyan); color: #000; box-shadow: 0 0 15px var(--neon-cyan); }
         .cyber-btn:disabled { opacity: 0.1; cursor: not-allowed; border-color: #333; color: #555; }
@@ -52,11 +55,13 @@
         .size-select {
             background: #000; color: var(--neon-cyan); border: 1px solid var(--neon-cyan);
             font-size: 10px; padding: 2px 4px; border-radius: 2px;
+            touch-action: manipulation;
         }
 
         .grid-wrapper {
             margin-top: 10px; display: inline-grid; grid-template-columns: auto auto; grid-template-rows: auto auto;
             max-width: 98vw; padding: 10px; box-sizing: border-box; justify-content: center;
+            touch-action: none; /* The grid itself is strictly non-zoomable */
         }
 
         .cyber-grid {
@@ -70,7 +75,19 @@
             cursor: pointer; z-index: 5; touch-action: none;
         }
 
-        /* Erratic cell state (for secondary subgraphs) */
+        /* Fork Anchor - Diamond Marker */
+        .fork-anchor {
+            position: absolute; width: 45%; height: 45%; 
+            border: 2px solid var(--neon-cyan);
+            outline: 1.5px solid #000;
+            transform: rotate(45deg); 
+            z-index: 150; 
+            pointer-events: none;
+            box-shadow: 0 0 10px var(--neon-cyan), inset 0 0 5px rgba(0,0,0,0.8);
+            animation: anchor-pulse 1.5s ease-in-out infinite;
+        }
+
+        /* Erratic cell state */
         .cell-erratic { background: radial-gradient(circle, rgba(255, 0, 255, 0.15) 0%, transparent 70%); animation: cell-jitter 4s infinite; }
 
         /* Neural Trace Lines */
@@ -97,13 +114,10 @@
             display: flex; align-items: center; justify-content: center; pointer-events: none;
         }
         .node-core { width: 50%; height: 50%; background: var(--neon-cyan); animation: core-pulse 3s infinite; }
-        
         .node-complete { border-color: var(--neon-green) !important; box-shadow: 0 0 12px var(--neon-green) !important; }
         .node-complete .node-core { background: var(--neon-green) !important; }
-        
         .node-conflict { border-color: var(--neon-red) !important; box-shadow: 0 0 15px var(--neon-red) !important; animation: jitter-fast 0.08s infinite !important; }
         .node-conflict .node-core { background: var(--neon-red) !important; }
-
         .node-erratic { border-color: var(--neon-magenta) !important; box-shadow: 0 0 15px var(--neon-magenta) !important; animation: jitter-fast 0.12s infinite !important; }
         .node-erratic .node-core { background: var(--neon-magenta) !important; animation: core-pulse-fast 0.5s infinite !important; }
 
@@ -115,7 +129,7 @@
         .wall-l3 { background: var(--neon-magenta); box-shadow: 0 0 10px var(--neon-magenta); }
         .wall-error { background: var(--neon-red) !important; box-shadow: 0 0 15px var(--neon-red) !important; z-index: 15; animation: err-pulse 1.5s ease-in-out infinite !important; }
 
-        /* Red X - Invalid Sectors */
+        /* Red X */
         .invalid-box { 
             position: absolute; inset: 8%; z-index: 100; pointer-events: none; 
             display: flex; align-items: center; justify-content: center; 
@@ -149,6 +163,23 @@
             border: 4px solid var(--neon-green); box-shadow: inset 0 0 50px var(--neon-green); pointer-events: none;
         }
 
+        #briefingOverlay {
+            position: fixed; inset: 0; background: rgba(5, 5, 6, 0.95);
+            z-index: 500; display: none; align-items: center; justify-content: center;
+            padding: 20px;
+        }
+        .briefing-modal {
+            max-width: 600px; width: 100%; max-height: 85vh; overflow-y: auto;
+            background: #0f0f14; border: 2px solid var(--neon-cyan);
+            box-shadow: 0 0 30px rgba(0, 243, 255, 0.2); padding: 24px;
+            font-family: 'Courier New', monospace; font-size: 13px; line-height: 1.6;
+        }
+        .briefing-header { color: var(--neon-cyan); border-bottom: 1px solid var(--neon-cyan); margin-bottom: 16px; padding-bottom: 8px; font-weight: 900; letter-spacing: 2px; }
+        .briefing-section { margin-bottom: 12px; }
+        .briefing-section h3 { color: var(--neon-green); margin-bottom: 4px; text-transform: uppercase; }
+        .briefing-tag { color: var(--neon-amber); font-weight: bold; }
+
+        @keyframes anchor-pulse { 0%, 100% { opacity: 0.4; transform: rotate(45deg) scale(0.9); } 50% { opacity: 1; transform: rotate(45deg) scale(1.1); } }
         @keyframes jitter-fast { 0% { transform: translate(1px, 1px); } 50% { transform: translate(-1px, -1px); } 100% { transform: translate(1px, 1px); } }
         @keyframes cell-jitter { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; transform: scale(0.98); } }
         @keyframes core-pulse { 0%, 100% { opacity: 0.4; transform: scale(0.6); } 50% { opacity: 1; transform: scale(1.1); } }
@@ -158,7 +189,31 @@
 </head>
 <body>
 
+    <div id="briefingOverlay">
+        <div class="briefing-modal">
+            <div class="briefing-header">NEURAL_RECON_INIT_PROTOCOL v4.2</div>
+            <div class="briefing-section">
+                <h3>OBJECTIVE_LOG</h3>
+                <p>Isolate the <span class="briefing-tag">Primary Neural Path</span>. Legitimate signal transmissions must be differentiated from interference.</p>
+            </div>
+            <div class="briefing-section">
+                <h3>FIREWALL_CONSTRAINTS</h3>
+                <p>1. <span class="briefing-tag">GRID_MARGINS:</span> Edge numbers indicate mandatory firewall counts for that segment.</p>
+                <p>2. <span class="briefing-tag">SIGNAL_INTEGRITY:</span> Firewalls cannot be placed on valid signal traces.</p>
+            </div>
+            <div class="briefing-section">
+                <h3>PATH_STABILITY</h3>
+                <p>1. <span class="briefing-tag">NON_BRANCHING:</span> Signal must be a continuous loop. No 2x2 clumping allowed.</p>
+                <p>2. <span class="briefing-tag">TERMINAL_NODES:</span> Nodes glow <span class="text-green-400">Green</span> when verified.</p>
+            </div>
+            <div class="mt-6 flex justify-center">
+                <button id="closeBriefingBtn" class="cyber-btn" style="padding: 10px 40px; font-size: 14px;">ACKNOWLEDGE</button>
+            </div>
+        </div>
+    </div>
+
     <div class="header-strip">
+        <button id="briefingBtn" class="cyber-btn" style="border-color: var(--neon-amber); color: var(--neon-amber);">Briefing</button>
         <select id="gridSizeSelect" class="size-select">
             <option value="4">4x4</option>
             <option value="5">5x5</option>
@@ -193,11 +248,17 @@
     </div>
 
     <script>
+        // GLOBAL FIX: Prevent double-tap zoom via JS for environments that don't respect CSS 'manipulation'
+        document.addEventListener('dblclick', function(e) {
+            e.preventDefault();
+        }, { passive: false });
+
         let SIZE = 8;
         let solution = [];
         let layers = [];
         let currentIdx = 0;
         let targets = { r: [], c: [] };
+        let forkAnchors = [null, null, null, null];
         let isWon = false;
         let showKey = false;
         const colors = ["cyan", "green", "amber", "magenta"];
@@ -244,6 +305,7 @@
             targets.r = solution.map(row => row.filter(v => v === 1).length);
             targets.c = Array(SIZE).fill(0).map((_, c) => solution.filter(r => r[c] === 1).length);
             layers = [Array(SIZE * SIZE).fill(0)];
+            forkAnchors = [null, null, null, null];
             currentIdx = 0;
             render();
             renderMiniMap();
@@ -267,13 +329,15 @@
         function handleCellAction(idx) {
             const r = Math.floor(idx / SIZE), c = idx % SIZE;
             if (isWon || isTargetDeadEnd(r, c)) return;
-
             for (let j = 0; j < currentIdx; j++) if (layers[j][idx] !== 0) return;
 
             if (!isDragging) {
                 isDragging = true;
                 const currentVal = layers[currentIdx][idx];
                 dragMode = currentVal === 0 ? 1 : (currentVal === 1 ? 2 : 0);
+                if (currentIdx > 0 && forkAnchors[currentIdx] === null) {
+                    forkAnchors[currentIdx] = idx;
+                }
                 layers[currentIdx][idx] = dragMode;
             } else {
                 layers[currentIdx][idx] = dragMode;
@@ -286,10 +350,8 @@
             const rowL = document.getElementById('rowLabels'), colL = document.getElementById('colLabels');
             gameB.querySelectorAll('.cell').forEach(c => c.remove());
             rowL.innerHTML = ''; colL.innerHTML = '';
-            
             gameB.style.gridTemplateColumns = `repeat(${SIZE}, var(--cell-size))`;
             gameB.style.gridTemplateRows = `repeat(${SIZE}, var(--cell-size))`;
-
             for(let i=0; i<SIZE; i++) {
                 rowL.innerHTML += `<div class="count-neon"></div>`;
                 colL.innerHTML += `<div class="count-neon"></div>`;
@@ -322,7 +384,6 @@
                 let path = queue.shift();
                 let curr = path[path.length - 1];
                 if (curr === endIdx) return path;
-
                 let r = Math.floor(curr / SIZE), c = curr % SIZE;
                 [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dr, dc]) => {
                     let nr = r + dr, nc = c + dc;
@@ -343,9 +404,6 @@
             const cells = document.getElementById('mainGrid').querySelectorAll('.cell');
             const rl = document.getElementById('rowLabels').children;
             const cl = document.getElementById('colLabels').children;
-            document.getElementById('layerName').innerText = currentIdx === 0 ? "Root" : `Sub-${currentIdx}`;
-            document.getElementById('layerName').style.color = `var(--neon-${colors[currentIdx]})`;
-
             const merged = Array(SIZE*SIZE).fill(0);
             layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
 
@@ -360,35 +418,28 @@
             const rowTotals = Array(SIZE).fill(0), colTotals = Array(SIZE).fill(0);
             for(let r=0; r<SIZE; r++) {
                 let s = 0; for(let c=0; c<SIZE; c++) if(merged[r*SIZE+c] === 1) s++;
-                rowTotals[r] = s;
-                rl[r].innerText = targets.r[r];
+                rowTotals[r] = s; rl[r].innerText = targets.r[r];
                 rl[r].className = `count-neon ${s === targets.r[r] ? 'count-ok' : (s > targets.r[r] ? 'count-over' : '')}`;
             }
             for(let c=0; c<SIZE; c++) {
                 let s = 0; for(let r=0; r<SIZE; r++) if(merged[r*SIZE+c] === 1) s++;
-                colTotals[c] = s;
-                cl[c].innerText = targets.c[c];
+                colTotals[c] = s; cl[c].innerText = targets.c[c];
                 cl[c].className = `count-neon ${s === targets.c[c] ? 'count-ok' : (s > targets.c[c] ? 'count-over' : '')}`;
             }
 
-            // Subgraph Analysis (Island detection)
             const subgraphMap = Array(SIZE * SIZE).fill(-1);
             let subgraphs = [];
             for (let i = 0; i < SIZE * SIZE; i++) {
                 if (merged[i] !== 1 && subgraphMap[i] === -1) {
                     const currentGraph = [];
-                    const stack = [i];
-                    subgraphMap[i] = subgraphs.length;
+                    const stack = [i]; subgraphMap[i] = subgraphs.length;
                     while (stack.length > 0) {
-                        const curr = stack.pop();
-                        currentGraph.push(curr);
+                        const curr = stack.pop(); currentGraph.push(curr);
                         const r = Math.floor(curr/SIZE), c = curr % SIZE;
                         [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dr, dc]) => {
-                            const nr = r + dr, nc = c + dc;
-                            const nIdx = nr * SIZE + nc;
+                            const nr = r + dr, nc = c + dc, nIdx = nr * SIZE + nc;
                             if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && merged[nIdx] !== 1 && subgraphMap[nIdx] === -1) {
-                                subgraphMap[nIdx] = subgraphs.length;
-                                stack.push(nIdx);
+                                subgraphMap[nIdx] = subgraphs.length; stack.push(nIdx);
                             }
                         });
                     }
@@ -396,21 +447,17 @@
                 }
             }
 
-            // Determine Primary Graph (Largest)
             let primaryIdx = -1;
             if (subgraphs.length > 0) {
                 let maxLen = -1;
                 subgraphs.forEach((g, idx) => { if(g.length > maxLen) { maxLen = g.length; primaryIdx = idx; } });
             }
             const erraticIndices = new Set();
-            subgraphs.forEach((g, idx) => {
-                if (idx !== primaryIdx) g.forEach(i => erraticIndices.add(i));
-            });
+            subgraphs.forEach((g, idx) => { if (idx !== primaryIdx) g.forEach(i => erraticIndices.add(i)); });
 
             const authenticatedIndices = new Set();
             const authenticatedEdges = new Set();
             const visitedNetwork = new Set();
-            
             for(let i=0; i<SIZE*SIZE; i++) {
                 if(merged[i] === 2 && !visitedNetwork.has(i)) {
                     let cluster = [], deadEndsFound = [], stack = [i];
@@ -423,13 +470,10 @@
                             if(nr>=0 && nr<SIZE && nc>=0 && nc<SIZE) {
                                 let nIdx = nr*SIZE+nc;
                                 if(merged[nIdx] === 2 && !visitedNetwork.has(nIdx)) { visitedNetwork.add(nIdx); stack.push(nIdx); } 
-                                else if(isTargetDeadEnd(nr, nc)) {
-                                    if(!deadEndsFound.includes(nIdx)) deadEndsFound.push(nIdx);
-                                }
+                                else if(isTargetDeadEnd(nr, nc)) { if(!deadEndsFound.includes(nIdx)) deadEndsFound.push(nIdx); }
                             }
                         });
                     }
-                    
                     if(deadEndsFound.length >= 2) {
                         for(let start = 0; start < deadEndsFound.length; start++) {
                             for(let end = start + 1; end < deadEndsFound.length; end++) {
@@ -460,70 +504,52 @@
 
             for(let i=0; i<SIZE*SIZE; i++) {
                 const cell = cells[i], r = Math.floor(i/SIZE), c = i%SIZE;
-                cell.innerHTML = '';
-                cell.classList.remove('cell-erratic');
-                
-                let playerWalls = 0;
-                let connectedToManualPath = 0;
-
+                cell.innerHTML = ''; cell.classList.remove('cell-erratic');
+                let playerWalls = 0, connectedToManualPath = 0;
                 [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dr, dc]) => {
                     let nr=r+dr, nc=c+dc;
-                    if(nr<0||nr>=SIZE||nc<0||nc>=SIZE||merged[nr*SIZE+nc] === 1) { playerWalls++; }
-                    else if(merged[nr*SIZE+nc] === 2) { connectedToManualPath++; }
+                    if(nr<0||nr>=SIZE||nc<0||nc>=SIZE||merged[nr*SIZE+nc] === 1) playerWalls++;
+                    else if(merged[nr*SIZE+nc] === 2) connectedToManualPath++;
                 });
+                if (erraticIndices.has(i)) cell.classList.add('cell-erratic');
 
-                const isConflictNode = clumps.has(i);
-                const isErratic = erraticIndices.has(i);
-
-                if (isErratic) cell.classList.add('cell-erratic');
+                if (currentIdx > 0 && forkAnchors[currentIdx] === i) {
+                    const anchor = document.createElement('div');
+                    anchor.className = 'fork-anchor';
+                    anchor.style.borderColor = `var(--neon-${colors[currentIdx]})`;
+                    anchor.style.boxShadow = `0 0 10px var(--neon-${colors[currentIdx]})`;
+                    cell.appendChild(anchor);
+                }
 
                 if(isTargetDeadEnd(r, c)) {
                     const node = document.createElement('div');
                     let nodeClass = 'node';
-                    if (isErratic || playerWalls === 4) {
-                        nodeClass += ' node-erratic'; // Isolated or surrounded
-                    } else if (playerWalls === 3) {
-                        nodeClass += ' node-complete'; // Capped
-                    } else if (connectedToManualPath >= 2) {
-                        nodeClass += ' node-conflict'; // Branching
-                    }
+                    if (erraticIndices.has(i) || playerWalls === 4) nodeClass += ' node-erratic'; 
+                    else if (playerWalls === 3) nodeClass += ' node-complete'; 
+                    else if (connectedToManualPath >= 2) nodeClass += ' node-conflict'; 
                     node.className = nodeClass;
                     node.innerHTML = '<div class="node-core"></div>';
                     cell.appendChild(node);
                 } else if(playerWalls >= 3 && merged[i] !== 1) {
                     const box = document.createElement('div');
                     box.className = 'invalid-box';
-                    if ((rowTotals[r] > targets.r[r] || colTotals[c] > targets.c[c]) || merged[i] === 2 || targets.r[r] === 0 || targets.c[c] === 0) {
-                        box.classList.add('invalid-box-high');
-                    }
+                    if ((rowTotals[r] > targets.r[r] || colTotals[c] > targets.c[c]) || merged[i] === 2) box.classList.add('invalid-box-high');
                     box.innerHTML = '<div class="invalid-x"></div>';
                     cell.appendChild(box);
                 }
 
                 if (merged[i] !== 1) {
-                    const isManual = (merged[i] === 2);
-                    const isDead = isTargetDeadEnd(r, c);
-                    
-                    if (isManual || isDead) {
+                    if (merged[i] === 2 || isTargetDeadEnd(r, c)) {
                         [[0,1,'e','h','trace-e'],[0,-1,'w','h','trace-w'],[1,0,'s','v','trace-s'],[-1,0,'n','v','trace-n']].forEach(([dr, dc, dir, orient, cls]) => {
-                            let nr=r+dr, nc=c+dc;
-                            if(nr>=0 && nr<SIZE && nc>=0 && nc<SIZE) {
-                                const nIdx = nr*SIZE+nc;
-                                if (merged[nIdx] === 2 || isTargetDeadEnd(nr, nc)) {
-                                    const trace = document.createElement('div');
-                                    trace.className = `trace-line trace-${orient} ${cls}`;
-                                    
-                                    let u = Math.min(i, nIdx), v = Math.max(i, nIdx);
-                                    if (isConflictNode || clumps.has(nIdx)) {
-                                        trace.classList.add('trace-error');
-                                    } else if (isErratic) {
-                                        trace.classList.add('trace-erratic');
-                                    } else if (authenticatedEdges.has(`${u}-${v}`)) {
-                                        trace.classList.add('trace-complete');
-                                    }
-                                    
-                                    cell.appendChild(trace);
-                                }
+                            let nr=r+dr, nc=c+dc, nIdx = nr*SIZE+nc;
+                            if(nr>=0 && nr<SIZE && nc>=0 && nc<SIZE && (merged[nIdx] === 2 || isTargetDeadEnd(nr, nc))) {
+                                const trace = document.createElement('div');
+                                trace.className = `trace-line trace-${orient} ${cls}`;
+                                let u = Math.min(i, nIdx), v = Math.max(i, nIdx);
+                                if (clumps.has(i) || clumps.has(nIdx)) trace.classList.add('trace-error');
+                                else if (erraticIndices.has(i)) trace.classList.add('trace-erratic');
+                                else if (authenticatedEdges.has(`${u}-${v}`)) trace.classList.add('trace-complete');
+                                cell.appendChild(trace);
                             }
                         });
                     }
@@ -535,25 +561,27 @@
                     } else if (layer[i] === 2) {
                         let dotClass = `path-dot ${lIdx === currentIdx ? '' : 'path-dot-dim'}`;
                         if (clumps.has(i)) dotClass += ' path-dot-error';
-                        else if (isErratic) dotClass += ' path-dot-erratic';
+                        else if (erraticIndices.has(i)) dotClass += ' path-dot-erratic';
                         else if (authenticatedIndices.has(i)) dotClass += ' path-dot-complete';
-                        
                         cell.appendChild(Object.assign(document.createElement('div'), {className: dotClass}));
                     }
                 });
             }
-
             document.getElementById('commitBtn').disabled = currentIdx === 0;
             document.getElementById('discardBtn').disabled = currentIdx === 0;
             document.getElementById('addLayerBtn').disabled = currentIdx >= 3;
+            document.getElementById('layerName').innerText = currentIdx === 0 ? "Root" : `Sub-${currentIdx}`;
+            document.getElementById('layerName').style.color = `var(--neon-${colors[currentIdx]})`;
         }
 
         document.getElementById('gridSizeSelect').onchange = init;
-        document.getElementById('addLayerBtn').onclick = () => { if(currentIdx < 3) { layers.push(Array(SIZE*SIZE).fill(0)); currentIdx++; update(); } };
+        document.getElementById('addLayerBtn').onclick = () => { if(currentIdx < 3) { layers.push(Array(SIZE*SIZE).fill(0)); currentIdx++; forkAnchors[currentIdx] = null; update(); } };
         document.getElementById('commitBtn').onclick = () => { if(currentIdx>0) { const cur = layers.pop(); currentIdx--; cur.forEach((v, i) => { if(v !== 0) layers[currentIdx][i] = v; }); update(); } };
         document.getElementById('discardBtn').onclick = () => { if(currentIdx>0) { layers.pop(); currentIdx--; update(); } };
         document.getElementById('newMazeBtn').onclick = init;
         document.getElementById('decryptBtn').onclick = () => { showKey = !showKey; document.getElementById('answerKeySection').classList.toggle('hidden', !showKey); };
+        document.getElementById('briefingBtn').onclick = () => { document.getElementById('briefingOverlay').style.display = 'flex'; };
+        document.getElementById('closeBriefingBtn').onclick = () => { document.getElementById('briefingOverlay').style.display = 'none'; };
         window.onload = init;
     </script>
 </body>

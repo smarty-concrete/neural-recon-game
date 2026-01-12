@@ -2,9 +2,30 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Neural Recon Terminal</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- PWA Meta Tags -->
+    <meta name="application-name" content="Neural Recon">
+    <meta name="theme-color" content="#050506">
+    <meta name="mobile-web-app-capable" content="yes">
+
+    <!-- iOS PWA Meta Tags -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Neural Recon">
+
+    <!-- iOS Icons -->
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
+    <link rel="apple-touch-icon" sizes="152x152" href="icons/icon-152.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/icon-180.png">
+
+    <!-- Manifest -->
+    <link rel="manifest" href="manifest.json">
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/png" sizes="32x32" href="icons/icon-96.png">
+
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -261,7 +282,7 @@
                 </div>
             </div>
 
-            <div class="mt-6 flex justify-center">
+            <div class="briefing-footer">
                 <button id="closeBriefingBtn" class="cyber-btn" style="padding: 10px 40px; font-size: 14px;">Got It</button>
             </div>
         </div>
@@ -285,8 +306,8 @@
             <button id="addLayerBtn" class="cyber-btn btn-action">Fork</button>
             <button id="commitBtn" class="cyber-btn">Commit</button>
             <button id="discardBtn" class="cyber-btn btn-kill">Abort</button>
-            <div class="px-3 border-l border-white/20">
-                <span id="layerName" class="text-[10px] uppercase font-black tracking-widest text-cyan-400">Root</span>
+            <div class="layer-indicator">
+                <span id="layerName" class="layer-name">Root</span>
             </div>
         </div>
     </div>
@@ -342,14 +363,29 @@
         <div class="grid-spacer"></div>
     </div>
 
-    <div class="p-4 flex flex-col items-center">
-        <button id="decryptBtn" class="cyber-btn opacity-40">Toggle Decrypt Overlay</button>
-        <div id="answerKeySection" class="hidden flex flex-col items-center gap-3 p-4 mt-3 border border-dashed border-amber-500/30 bg-amber-500/5">
-            <div id="miniGrid" class="grid gap-px bg-zinc-800 border border-zinc-700"></div>
+    <div class="decrypt-section">
+        <button id="decryptBtn" class="cyber-btn decrypt-btn">Toggle Decrypt Overlay</button>
+        <div id="answerKeySection" class="answer-key-section">
+            <div id="miniGrid" class="mini-grid"></div>
         </div>
     </div>
 
     <script src="game.js"></script>
+
+    <!-- Service Worker Registration -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/service-worker.js')
+                    .then((registration) => {
+                        console.log('ServiceWorker registered:', registration.scope);
+                    })
+                    .catch((error) => {
+                        console.log('ServiceWorker registration failed:', error);
+                    });
+            });
+        }
+    </script>
 </body>
 </html>
 

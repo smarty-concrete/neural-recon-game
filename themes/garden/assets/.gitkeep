@@ -1,0 +1,15 @@
+﻿# Placeholder for garden theme assets
+# Required images:
+# - flower.png (default wall)
+# - flower-pink.png (layer 0 wall)
+# - flower-purple.png (layer 1 wall)
+# - flower-yellow.png (layer 2 wall)
+# - flower-orange.png (layer 3 wall)
+# - leaf.png (path marker)
+# - seedpod.png (dead-end node)
+# - seedpod-sprouted.png (completed node)
+# - beehive.png (stockpile)
+# - beehive-golden.png (completed stockpile)
+# - soil.png (cell background)
+# - garden-bed.png (grid background)
+

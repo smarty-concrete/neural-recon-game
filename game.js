@@ -210,6 +210,206 @@ const ChipSound = (() => {
     };
 })();
 
+// ============================================
+// CHIPTUNE BACKGROUND MUSIC SYSTEM
+// ============================================
+const ChipMusic = (() => {
+    let audioCtx = null;
+    let isPlaying = false;
+    let isMuted = false;
+    let masterGain = null;
+    let schedulerInterval = null;
+    let nextNoteTime = 0;
+    const scheduleAheadTime = 0.1; // seconds to schedule ahead
+    const tempo = 75; // BPM - mellow pace
+    const secondsPerBeat = 60.0 / tempo;
+
+    // Musical scales and patterns
+    const scale = [
+        130.81, // C3
+        146.83, // D3
+        164.81, // E3
+        196.00, // G3
+        220.00, // A3
+        261.63, // C4
+        293.66, // D4
+        329.63, // E4
+        392.00, // G4
+        440.00, // A4
+    ]; // C major pentatonic across 2 octaves
+
+    // Chord progressions (indices into scale)
+    const chordProgressions = [
+        [0, 2, 4],    // C major-ish
+        [1, 3, 5],    // D minor-ish
+        [4, 6, 8],    // A minor-ish
+        [3, 5, 7],    // G major-ish
+    ];
+
+    // Bass pattern (scale indices)
+    const bassPattern = [0, 0, 3, 3, 4, 4, 3, 3];
+
+    // Arpeggio patterns
+    const arpPatterns = [
+        [0, 2, 4, 2],
+        [0, 4, 2, 4],
+        [4, 2, 0, 2],
+    ];
+
+    let currentBeat = 0;
+    let currentBar = 0;
+    let currentChordIdx = 0;
+    let currentArpPattern = 0;
+
+    function initAudio() {
+        if (!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            masterGain = audioCtx.createGain();
+            masterGain.gain.value = 0.15; // Low volume for background music
+            masterGain.connect(audioCtx.destination);
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        return audioCtx;
+    }
+
+    function playNote(freq, time, duration, type = 'triangle', volume = 0.3) {
+        if (!audioCtx || isMuted) return;
+
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, time);
+
+        // Soft envelope
+        gain.gain.setValueAtTime(0, time);
+        gain.gain.linearRampToValueAtTime(volume, time + 0.02);
+        gain.gain.setValueAtTime(volume * 0.7, time + duration * 0.3);
+        gain.gain.linearRampToValueAtTime(0, time + duration);
+
+        osc.connect(gain);
+        gain.connect(masterGain);
+
+        osc.start(time);
+        osc.stop(time + duration);
+    }
+
+    function playBass(time) {
+        const noteIdx = bassPattern[currentBeat % bassPattern.length];
+        const freq = scale[noteIdx] / 2; // One octave lower
+        playNote(freq, time, secondsPerBeat * 0.8, 'triangle', 0.4);
+    }
+
+    function playArpeggio(time) {
+        const chord = chordProgressions[currentChordIdx];
+        const arpPattern = arpPatterns[currentArpPattern];
+        const arpIdx = currentBeat % arpPattern.length;
+        const noteInChord = arpPattern[arpIdx] % chord.length;
+        const scaleIdx = chord[noteInChord];
+        const freq = scale[scaleIdx];
+        playNote(freq, time, secondsPerBeat * 0.4, 'square', 0.15);
+    }
+
+    function playPad(time) {
+        // Play soft pad chord on beat 0 of each bar
+        if (currentBeat !== 0) return;
+
+        const chord = chordProgressions[currentChordIdx];
+        chord.forEach((scaleIdx, i) => {
+            const freq = scale[scaleIdx];
+            // Stagger slightly for richness
+            playNote(freq, time + i * 0.02, secondsPerBeat * 3.5, 'sine', 0.12);
+        });
+    }
+
+    function scheduleNote() {
+        // Play different elements
+        playBass(nextNoteTime);
+        playArpeggio(nextNoteTime);
+        playPad(nextNoteTime);
+
+        // Advance time
+        nextNoteTime += secondsPerBeat / 2; // 8th notes
+        currentBeat = (currentBeat + 1) % 8;
+
+        // Change chord every bar
+        if (currentBeat === 0) {
+            currentBar++;
+            currentChordIdx = (currentChordIdx + 1) % chordProgressions.length;
+
+            // Occasionally change arp pattern
+            if (currentBar % 4 === 0) {
+                currentArpPattern = Math.floor(Math.random() * arpPatterns.length);
+            }
+        }
+    }
+
+    function scheduler() {
+        while (nextNoteTime < audioCtx.currentTime + scheduleAheadTime) {
+            scheduleNote();
+        }
+    }
+
+    return {
+        start: () => {
+            if (isPlaying) return;
+            initAudio();
+            if (!audioCtx) return;
+
+            isPlaying = true;
+            nextNoteTime = audioCtx.currentTime;
+            currentBeat = 0;
+            currentBar = 0;
+            currentChordIdx = 0;
+
+            schedulerInterval = setInterval(scheduler, 25);
+        },
+
+        stop: () => {
+            if (!isPlaying) return;
+            isPlaying = false;
+            if (schedulerInterval) {
+                clearInterval(schedulerInterval);
+                schedulerInterval = null;
+            }
+        },
+
+        toggle: () => {
+            if (isPlaying) {
+                ChipMusic.stop();
+            } else {
+                ChipMusic.start();
+            }
+            return isPlaying;
+        },
+
+        isPlaying: () => isPlaying,
+
+        setVolume: (vol) => {
+            if (masterGain) {
+                masterGain.gain.value = Math.max(0, Math.min(1, vol));
+            }
+        },
+
+        mute: () => {
+            isMuted = true;
+            if (masterGain) masterGain.gain.value = 0;
+        },
+
+        unmute: () => {
+            isMuted = false;
+            if (masterGain) masterGain.gain.value = 0.15;
+        },
+
+        setMuted: (muted) => {
+            isMuted = muted;
+            if (masterGain) masterGain.gain.value = muted ? 0 : 0.15;
+        }
+    };
+})();
+
 // Animation sync: track page load time to keep animations in phase
 const pageLoadTime = Date.now();
 function getAnimationDelay() {
@@ -249,14 +449,30 @@ function undo() {
     update();
 }
 
-const colors = ["cyan", "blue", "amber", "magenta"];
+// Layer colors - will be updated by theme system
+let colors = ["cyan", "blue", "amber", "magenta"];
 
 function updateButtonStates() {
     document.getElementById('commitBtn').disabled = currentIdx === 0;
     document.getElementById('discardBtn').disabled = currentIdx === 0;
     document.getElementById('addLayerBtn').disabled = currentIdx >= 3;
-    document.getElementById('layerName').innerText = currentIdx === 0 ? "Root" : `Fork ${currentIdx}`;
+
+    // Use theme terminology for layer names
+    const theme = typeof ThemeManager !== 'undefined' ? ThemeManager.current() : null;
+    const layerNames = theme?.terminology?.layerNames || ['Root', 'Fork 1', 'Fork 2', 'Fork 3'];
+    document.getElementById('layerName').innerText = layerNames[currentIdx] || `Layer ${currentIdx}`;
     document.getElementById('layerName').style.color = `var(--neon-${colors[currentIdx]})`;
+
+    // Update button labels from theme
+    if (theme?.terminology) {
+        const t = theme.terminology;
+        if (t.fork) document.getElementById('addLayerBtn').textContent = t.fork;
+        if (t.commit) document.getElementById('commitBtn').textContent = t.commit;
+        if (t.discard) document.getElementById('discardBtn').textContent = t.discard;
+        if (t.undo) document.getElementById('undoBtn').textContent = t.undo;
+        if (t.newGame) document.getElementById('newMazeBtn').textContent = t.newGame;
+        if (t.briefing) document.getElementById('briefingBtn').textContent = t.briefing;
+    }
 }
 
 let isDragging = false;
@@ -274,17 +490,25 @@ let gameStartTime = null;
 let moveCount = 0;
 let winStreak = 0;
 
-// Techno-babble generator
-const babblePrefixes = ['Quantum', 'Neural', 'Synaptic', 'Crypto', 'Hyper', 'Meta', 'Nano', 'Cyber', 'Proto', 'Flux'];
-const babbleMiddles = ['mesh', 'link', 'sync', 'pulse', 'wave', 'core', 'node', 'grid', 'matrix', 'stream'];
-const babbleSuffixes = ['initialized', 'calibrated', 'synchronized', 'stabilized', 'verified', 'authenticated', 'decrypted', 'restored', 'optimized', 'aligned'];
-const babbleExtras = ['Buffer overflow contained.', 'Firewall integrity nominal.', 'Packet loss: 0.00%', 'Latency optimized.', 'Handshake complete.', 'Checksum verified.', 'Entropy normalized.', 'Signal-to-noise ratio optimal.', 'Bandwidth allocated.', 'Protocol engaged.'];
+// Flavor text generator - uses theme if available, falls back to cyberpunk defaults
+const defaultBabble = {
+    prefixes: ['Quantum', 'Neural', 'Synaptic', 'Crypto', 'Hyper', 'Meta', 'Nano', 'Cyber', 'Proto', 'Flux'],
+    middles: ['mesh', 'link', 'sync', 'pulse', 'wave', 'core', 'node', 'grid', 'matrix', 'stream'],
+    suffixes: ['initialized', 'calibrated', 'synchronized', 'stabilized', 'verified', 'authenticated', 'decrypted', 'restored', 'optimized', 'aligned'],
+    extras: ['Buffer overflow contained.', 'Firewall integrity nominal.', 'Packet loss: 0.00%', 'Latency optimized.', 'Handshake complete.', 'Checksum verified.', 'Entropy normalized.', 'Signal-to-noise ratio optimal.', 'Bandwidth allocated.', 'Protocol engaged.']
+};
 
 function generateTechnoBabble() {
-    const prefix = babblePrefixes[Math.floor(Math.random() * babblePrefixes.length)];
-    const middle = babbleMiddles[Math.floor(Math.random() * babbleMiddles.length)];
-    const suffix = babbleSuffixes[Math.floor(Math.random() * babbleSuffixes.length)];
-    const extra = babbleExtras[Math.floor(Math.random() * babbleExtras.length)];
+    // Use theme's babble generator if available
+    if (typeof ThemeManager !== 'undefined' && ThemeManager.current()?.generateBabble) {
+        return ThemeManager.generateBabble();
+    }
+    // Fallback to default
+    const babble = defaultBabble;
+    const prefix = babble.prefixes[Math.floor(Math.random() * babble.prefixes.length)];
+    const middle = babble.middles[Math.floor(Math.random() * babble.middles.length)];
+    const suffix = babble.suffixes[Math.floor(Math.random() * babble.suffixes.length)];
+    const extra = babble.extras[Math.floor(Math.random() * babble.extras.length)];
     return `${prefix}-${middle} ${suffix}. ${extra}`;
 }
 
@@ -1936,27 +2160,47 @@ function update() {
 
         // Render stockpile if this is the stockpile position
         if (stockpilePos && stockpilePos.r === r && stockpilePos.c === c) {
-            const stockpile = document.createElement('div');
-            stockpile.className = 'stockpile' + (stockpileInWalledRoom ? ' stockpile-complete' : '');
-            const icon = document.createElement('div');
-            icon.className = 'stockpile-icon';
-            icon.style.animationDelay = getAnimationDelay();
-            stockpile.appendChild(icon);
+            const stockpileState = stockpileInWalledRoom ? 'complete' : 'normal';
+            let stockpile;
+
+            // Use theme renderer if available
+            if (typeof ThemeManager !== 'undefined' && ThemeManager.current()?.renderStockpile) {
+                stockpile = ThemeManager.render.stockpile(stockpileState);
+            } else {
+                stockpile = document.createElement('div');
+                stockpile.className = 'stockpile' + (stockpileInWalledRoom ? ' stockpile-complete' : '');
+                const icon = document.createElement('div');
+                icon.className = 'stockpile-icon';
+                icon.style.animationDelay = getAnimationDelay();
+                stockpile.appendChild(icon);
+            }
             cell.appendChild(stockpile);
         }
 
         if(isTargetDeadEnd(r, c)) {
-            const node = document.createElement('div');
-            let nodeClass = 'node';
-            if (erraticIndices.has(i) || playerWalls === 4) nodeClass += ' node-erratic';
-            else if (playerWalls === 3) nodeClass += ' node-complete';
-            else if (connectedToManualPath >= 2) nodeClass += ' node-conflict';
-            node.className = nodeClass;
+            // Determine node state
+            let nodeState = 'normal';
+            if (erraticIndices.has(i) || playerWalls === 4) nodeState = 'erratic';
+            else if (playerWalls === 3) nodeState = 'complete';
+            else if (connectedToManualPath >= 2) nodeState = 'conflict';
+
+            let node;
+            // Use theme renderer if available
+            if (typeof ThemeManager !== 'undefined' && ThemeManager.current()?.renderNode) {
+                node = ThemeManager.render.node(nodeState);
+            } else {
+                node = document.createElement('div');
+                let nodeClass = 'node';
+                if (nodeState === 'erratic') nodeClass += ' node-erratic';
+                else if (nodeState === 'complete') nodeClass += ' node-complete';
+                else if (nodeState === 'conflict') nodeClass += ' node-conflict';
+                node.className = nodeClass;
+                const core = document.createElement('div');
+                core.className = 'node-core';
+                core.style.animationDelay = getAnimationDelay();
+                node.appendChild(core);
+            }
             node.style.animationDelay = getAnimationDelay();
-            const core = document.createElement('div');
-            core.className = 'node-core';
-            core.style.animationDelay = getAnimationDelay();
-            node.appendChild(core);
             cell.appendChild(node);
         } else if(playerWalls >= 3 && merged[i] !== 1) {
             const box = document.createElement('div');
@@ -2003,21 +2247,43 @@ function update() {
         layers.forEach((layer, lIdx) => {
             if (layer[i] === 1) {
                 const isError = rowTotals[r] > targets.r[r] || colTotals[c] > targets.c[c];
-                const wall = document.createElement('div');
                 const isCurrentLayer = lIdx === currentIdx;
-                const errorClass = isError ? (isCurrentLayer ? 'wall-error' : 'wall-error-dim') : '';
-                wall.className = `wall wall-l${lIdx} ${isCurrentLayer ? '' : 'opacity-40'} ${errorClass}`;
+
+                // Use theme renderer if available
+                let wall;
+                if (typeof ThemeManager !== 'undefined' && ThemeManager.current()?.renderWall) {
+                    wall = ThemeManager.render.wall(lIdx, isError, isCurrentLayer);
+                } else {
+                    wall = document.createElement('div');
+                    const errorClass = isError ? (isCurrentLayer ? 'wall-error' : 'wall-error-dim') : '';
+                    wall.className = `wall wall-l${lIdx} ${isCurrentLayer ? '' : 'opacity-40'} ${errorClass}`;
+                }
                 if (isError && isCurrentLayer) wall.style.animationDelay = getAnimationDelay();
                 cell.appendChild(wall);
             } else if (layer[i] === 2) {
-                let dotClass = `path-dot ${lIdx === currentIdx ? '' : 'path-dot-dim'}`;
+                const isCurrentLayer = lIdx === currentIdx;
                 const hasAnimation = clumps.has(i) || erraticIndices.has(i);
-                if (clumps.has(i)) dotClass += ' path-dot-error';
-                else if (erraticIndices.has(i)) dotClass += ' path-dot-erratic';
-                else if (complete3x3Cells.has(i)) dotClass += ' path-dot-complete-blue';
-                else if (authenticatedIndices.has(i)) dotClass += ' path-dot-complete';
-                const dot = document.createElement('div');
-                dot.className = dotClass;
+
+                // Determine path state
+                let pathState = 'normal';
+                if (clumps.has(i)) pathState = 'error';
+                else if (erraticIndices.has(i)) pathState = 'erratic';
+                else if (complete3x3Cells.has(i)) pathState = 'complete-blue';
+                else if (authenticatedIndices.has(i)) pathState = 'complete';
+
+                // Use theme renderer if available
+                let dot;
+                if (typeof ThemeManager !== 'undefined' && ThemeManager.current()?.renderPathDot) {
+                    dot = ThemeManager.render.pathDot(lIdx, isCurrentLayer, pathState);
+                } else {
+                    dot = document.createElement('div');
+                    let dotClass = `path-dot ${isCurrentLayer ? '' : 'path-dot-dim'}`;
+                    if (pathState === 'error') dotClass += ' path-dot-error';
+                    else if (pathState === 'erratic') dotClass += ' path-dot-erratic';
+                    else if (pathState === 'complete-blue') dotClass += ' path-dot-complete-blue';
+                    else if (pathState === 'complete') dotClass += ' path-dot-complete';
+                    dot.className = dotClass;
+                }
                 if (hasAnimation) dot.style.animationDelay = getAnimationDelay();
                 cell.appendChild(dot);
             }
@@ -2285,6 +2551,23 @@ document.getElementById('soundToggleBtn').onclick = () => {
     }
 };
 
+// Music toggle button
+document.getElementById('musicToggleBtn').onclick = () => {
+    const btn = document.getElementById('musicToggleBtn');
+    const icon = document.getElementById('musicIcon');
+    if (ChipMusic.isPlaying()) {
+        ChipMusic.stop();
+        btn.classList.add('muted');
+        icon.textContent = '🎵';
+        btn.title = 'Play Music';
+    } else {
+        ChipMusic.start();
+        btn.classList.remove('muted');
+        icon.textContent = '🎶';
+        btn.title = 'Stop Music';
+    }
+};
+
 // Tab switching for briefing modal
 document.querySelectorAll('.briefing-tab').forEach(tab => {
     tab.onclick = () => {
@@ -2306,4 +2589,105 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
     };
 });
 
-window.onload = () => init(true);
+// Theme selector
+const themeSelect = document.getElementById('themeSelect');
+if (themeSelect) {
+    themeSelect.onchange = () => {
+        ChipSound.click();
+        if (typeof ThemeManager !== 'undefined') {
+            ThemeManager.set(themeSelect.value);
+            // Update colors array from theme
+            const theme = ThemeManager.current();
+            if (theme?.layerColors) {
+                colors = [...theme.layerColors];
+            }
+            // Re-render with new theme
+            updateButtonStates();
+            update();
+        }
+    };
+}
+
+// Initialize theme system and game
+// Update briefing text based on theme terminology
+function updateBriefingTerminology(theme) {
+    if (!theme?.terminology) return;
+    const t = theme.terminology;
+
+    // Update briefing title
+    const briefingTitle = document.getElementById('briefingTitle');
+    if (briefingTitle && t.briefingTitle) briefingTitle.textContent = t.briefingTitle;
+
+    // Update stockpile description
+    const stockpileDesc = document.getElementById('stockpileDesc');
+    if (stockpileDesc && t.stockpileDesc) stockpileDesc.textContent = t.stockpileDesc;
+
+    // Update vault description (keeping the stockpile tag)
+    const vaultDesc = document.getElementById('vaultDesc');
+    if (vaultDesc && t.vaultDesc) {
+        vaultDesc.innerHTML = t.vaultDesc.replace(
+            /Stockpile|Data Stockpile|Beehive/gi,
+            `<span class="briefing-tag theme-stockpile">${t.stockpile}</span>`
+        );
+    }
+
+    // Update all theme-specific spans
+    document.querySelectorAll('.theme-wall').forEach(el => el.textContent = t.wall || 'Wall');
+    document.querySelectorAll('.theme-path').forEach(el => el.textContent = t.path || 'Path');
+    document.querySelectorAll('.theme-deadend').forEach(el => el.textContent = t.deadEnd || 'Dead End');
+    document.querySelectorAll('.theme-stockpile').forEach(el => el.textContent = t.stockpile || 'Stockpile');
+    document.querySelectorAll('.theme-vault').forEach(el => el.textContent = t.vault || 'Vault');
+    document.querySelectorAll('.theme-fork').forEach(el => el.textContent = t.fork || 'Fork');
+    document.querySelectorAll('.theme-commit').forEach(el => el.textContent = t.commit || 'Commit');
+    document.querySelectorAll('.theme-discard').forEach(el => el.textContent = t.discard || 'Discard');
+}
+
+window.onload = () => {
+    // Initialize theme system if available
+    if (typeof ThemeManager !== 'undefined') {
+        ThemeManager.loadSaved('cyberpunk');
+
+        // Update colors array from loaded theme
+        const theme = ThemeManager.current();
+        if (theme?.layerColors) {
+            colors = [...theme.layerColors];
+        }
+
+        // Update briefing terminology
+        updateBriefingTerminology(theme);
+
+        // Populate theme selector
+        if (themeSelect) {
+            const options = ThemeManager.getOptions();
+            themeSelect.innerHTML = '';
+            options.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt.id;
+                option.textContent = opt.name;
+                if (opt.id === theme?.id) option.selected = true;
+                themeSelect.appendChild(option);
+            });
+        }
+
+        // Listen for theme changes
+        ThemeManager.onChange((newTheme) => {
+            if (newTheme?.layerColors) {
+                colors = [...newTheme.layerColors];
+            }
+            updateButtonStates();
+            updateBriefingTerminology(newTheme);
+        });
+    }
+
+    init(true);
+
+    // Start background music by default
+    ChipMusic.start();
+    const musicBtn = document.getElementById('musicToggleBtn');
+    const musicIcon = document.getElementById('musicIcon');
+    if (musicBtn && musicIcon) {
+        musicBtn.classList.remove('muted');
+        musicIcon.textContent = '🎶';
+        musicBtn.title = 'Stop Music';
+    }
+};

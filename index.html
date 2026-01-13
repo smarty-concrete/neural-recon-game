@@ -32,7 +32,7 @@
 
     <div id="briefingOverlay">
         <div class="briefing-modal">
-            <div class="briefing-header">Mission Briefing</div>
+            <div class="briefing-header" id="briefingTitle">Mission Briefing</div>
 
             <div class="briefing-tabs">
                 <div class="briefing-tab active" data-tab="basics">How to Play</div>
@@ -42,57 +42,57 @@
             <div id="tab-basics" class="briefing-content active">
                 <div class="briefing-section">
                     <h3>Goal</h3>
-                    <p>Find the hidden path through the grid by placing the missing walls.</p>
+                    <p>Find the hidden path through the grid by placing the missing <span class="theme-wall">walls</span>.</p>
                 </div>
 
                 <div class="briefing-section">
                     <h3>Rules</h3>
-                    <p>1. The <span class="briefing-tag">numbers</span> on each row/column show how many walls belong there.</p>
-                    <p>2. The path must be <span class="briefing-tag">continuous</span> — all path nodes and dead ends connect.</p>
-                    <p>3. <span class="briefing-tag">No 2×2 squares</span> of path nodes allowed (except inside a data vault).</p>
-                    <p>4. On larger grids, a <span class="briefing-tag">Data Stockpile</span> may appear inside a hidden 3×3 vault with a single door.</p>
+                    <p>1. The <span class="briefing-tag">numbers</span> on each row/column show how many <span class="theme-wall">walls</span> belong there.</p>
+                    <p>2. The path must be <span class="briefing-tag">continuous</span> — all path nodes and <span class="theme-deadend">dead ends</span> connect.</p>
+                    <p>3. <span class="briefing-tag">No 2×2 squares</span> of path nodes allowed (except inside a <span class="theme-vault">vault</span>).</p>
+                    <p>4. On larger grids, a <span class="briefing-tag theme-stockpile">Stockpile</span> may appear inside a hidden 3×3 <span class="theme-vault">vault</span> with a single door.</p>
                 </div>
 
                 <div class="briefing-section">
                     <h3>Cell Types</h3>
                     <div class="briefing-row">
                         <span class="cell-icon cell-icon-wall"></span>
-                        <span class="briefing-row-label"><span class="briefing-tag">Wall Node</span> — Click once to place. Blocks the path. Fill in all walls to finish the puzzle.</span>
+                        <span class="briefing-row-label"><span class="briefing-tag theme-wall">Wall</span> — Click once to place. Blocks the path. Fill in all <span class="theme-wall">walls</span> to finish the puzzle.</span>
                     </div>
                     <div class="briefing-row">
                         <span class="cell-icon cell-icon-path"></span>
-                        <span class="briefing-row-label"><span class="briefing-tag">Path Node</span> — Click twice to place. Marks where the path goes. It is not necessary to fill in all paths to finish the puzzle.</span>
+                        <span class="briefing-row-label"><span class="briefing-tag theme-path">Path</span> — Click twice to place. Marks where the path goes. It is not necessary to fill in all paths to finish the puzzle.</span>
                     </div>
                     <div class="briefing-row">
                         <span class="cell-icon cell-icon-deadend"></span>
-                        <span class="briefing-row-label"><span class="briefing-tag">Dead End Node</span> — Fixed on the grid. The path must connect to each of these. Each dead end node must connect to exactly one path.</span>
+                        <span class="briefing-row-label"><span class="briefing-tag theme-deadend">Dead End</span> — Fixed on the grid. The path must connect to each of these. Each <span class="theme-deadend">dead end</span> must connect to exactly one path.</span>
                     </div>
                     <div class="briefing-row">
                         <span class="cell-icon cell-icon-stockpile"></span>
-                        <span class="briefing-row-label"><span class="briefing-tag">Data Stockpile</span> — Located inside a 3×3 vault surrounded by walls with one door. Turns green when the vault is properly sealed.</span>
+                        <span class="briefing-row-label"><span class="briefing-tag theme-stockpile">Stockpile</span> — <span id="stockpileDesc">Located inside a 3×3 vault surrounded by walls with one door. Turns green when the vault is properly sealed.</span></span>
                     </div>
                 </div>
-                
+
                 <div class="briefing-section">
                     <h3>Controls</h3>
                     <p>Use the <span class="briefing-tag">Mode</span> buttons to select what to draw:</p>
-                    <p><span class="briefing-tag">Wall</span> — Tap to place walls, tap walls to erase</p>
-                    <p><span class="briefing-tag">Path</span> — Tap to place paths, tap paths to erase</p>
+                    <p><span class="briefing-tag theme-wall">Wall</span> — Tap to place <span class="theme-wall">walls</span>, tap <span class="theme-wall">walls</span> to erase</p>
+                    <p><span class="briefing-tag theme-path">Path</span> — Tap to place paths, tap paths to erase</p>
                     <p><span class="briefing-tag">Erase</span> — Tap any cell to clear it</p>
-                    <p><span class="briefing-tag">Auto</span> — Context-aware: tap empty for wall, tap wall for path, tap path to erase. Drag from dead end nodes or data stockpile nodes to draw paths. Tap on dead end nodes to auto-fill walls and paths when able.</p>
+                    <p><span class="briefing-tag">Auto</span> — Context-aware: tap empty for <span class="theme-wall">wall</span>, tap <span class="theme-wall">wall</span> for path, tap path to erase. Drag from <span class="theme-deadend">dead ends</span> or <span class="theme-stockpile">stockpile</span> to draw paths. Tap on <span class="theme-deadend">dead ends</span> to auto-fill <span class="theme-wall">walls</span> and paths when able.</p>
                 </div>
 
                 <div class="briefing-section">
                     <h3>Layers (Advanced)</h3>
-                    <p>Use <span class="briefing-tag">Fork</span> to create a new layer for experimenting.</p>
-                    <p>Use <span class="briefing-tag">Commit</span> to merge your changes down, or <span class="briefing-tag">Abort</span> to discard.</p>
+                    <p>Use <span class="briefing-tag theme-fork">Fork</span> to create a new layer for experimenting.</p>
+                    <p>Use <span class="briefing-tag theme-commit">Commit</span> to merge your changes down, or <span class="briefing-tag theme-discard">Discard</span> to undo.</p>
                 </div>
             </div>
 
             <div id="tab-tips" class="briefing-content">
                 <div class="briefing-section">
-                    <h3>Tip 1: Tap Dead Ends with One Path or Three Walls</h3>
-                    <p>When a dead end already has one path neighbor, or three wall neighbors, tap it to auto-fill walls and paths around it.</p>
+                    <h3>Tip 1: Tap <span class="theme-deadend">Dead Ends</span> with One Path or Three <span class="theme-wall">Walls</span></h3>
+                    <p>When a <span class="theme-deadend">dead end</span> already has one path neighbor, or three <span class="theme-wall">wall</span> neighbors, tap it to auto-fill <span class="theme-wall">walls</span> and paths around it.</p>
                     <div class="tip-example">
                         <div>
                             <div class="tip-grid" style="grid-template-columns: repeat(3, 24px);">
@@ -108,14 +108,14 @@
                             </div>
                         </div>
                         <div class="tip-explanation">
-                            The dead end already connects left. Tapping it fills the other 3 neighbors with walls automatically.
+                            The <span class="theme-deadend">dead end</span> already connects left. Tapping it fills the other 3 neighbors with <span class="theme-wall">walls</span> automatically.
                         </div>
                     </div>
                 </div>
 
                 <div class="briefing-section">
                     <h3>Tip 2: Tap Green Numbers</h3>
-                    <p>When a row/column has the correct wall count (green number), tap it to fill remaining cells with path nodes.</p>
+                    <p>When a row/column has the correct <span class="theme-wall">wall</span> count (green number), tap it to fill remaining cells with path nodes.</p>
                     <div class="tip-example">
                         <div>
                             <div style="display: flex; align-items: center; gap: 4px;">
@@ -129,19 +129,19 @@
                             </div>
                         </div>
                         <div class="tip-explanation">
-                            This row needs 2 walls and already has 2. Tap the green "2" to fill empty cells with path nodes.
+                            This row needs 2 <span class="theme-wall">walls</span> and already has 2. Tap the green "2" to fill empty cells with path nodes.
                         </div>
                     </div>
                 </div>
 
                 <div class="briefing-section">
-                    <h3>Tip 3: Use Fork for Guessing</h3>
-                    <p>Stuck? Use <span class="briefing-tag">Fork</span> to try a guess. If it leads to a contradiction, <span class="briefing-tag">Abort</span> and try the opposite.</p>
+                    <h3>Tip 3: Use <span class="theme-fork">Fork</span> for Guessing</h3>
+                    <p>Stuck? Use <span class="briefing-tag theme-fork">Fork</span> to try a guess. If it leads to a contradiction, <span class="briefing-tag theme-discard">Discard</span> and try the opposite.</p>
                 </div>
 
                 <div class="briefing-section">
-                    <h3>Tip 4: Data Vault Layout</h3>
-                    <p>On 6×6+ grids, look for a 3×3 vault with 11 walls around it and 1 door. The vault contains a <span class="briefing-tag">Data Stockpile</span> somewhere inside.</p>
+                    <h3>Tip 4: <span class="theme-vault">Vault</span> Layout</h3>
+                    <p id="vaultDesc">On 6×6+ grids, look for a 3×3 vault with 11 walls around it and 1 door. The vault contains a <span class="briefing-tag theme-stockpile">Stockpile</span> somewhere inside.</p>
                     <div class="tip-example">
                         <div>
                             <div class="tip-grid" style="grid-template-columns: repeat(5, 24px);">
@@ -173,7 +173,7 @@
                             </div>
                         </div>
                         <div class="tip-explanation">
-                            The vault has 11 walls surrounding it with a single door. This example shows the door at the bottom, but it can be in any wall. The 3×3 interior is empty other than the data stockpile cell.
+                            The <span class="theme-vault">vault</span> has 11 <span class="theme-wall">walls</span> surrounding it with a single door. This example shows the door at the bottom, but it can be in any <span class="theme-wall">wall</span>. The 3×3 interior is empty other than the <span class="theme-stockpile">stockpile</span> cell.
                         </div>
                     </div>
                 </div>
@@ -183,8 +183,8 @@
                 </div>
 
                 <div class="briefing-section">
-                    <h3>Tip 5: Don't Create Unwanted Dead Ends</h3>
-                    <p>If a row needs only 1 more wall, it can't be placed where it would trap an empty cell with 3 walls.</p>
+                    <h3>Tip 5: Don't Create Unwanted <span class="theme-deadend">Dead Ends</span></h3>
+                    <p>If a row needs only 1 more <span class="theme-wall">wall</span>, it can't be placed where it would trap an empty cell with 3 <span class="theme-wall">walls</span>.</p>
                     <div class="tip-example">
                         <div>
                             <div style="display: flex; flex-direction: column; gap: 2px;">
@@ -209,14 +209,14 @@
                             </div>
                         </div>
                         <div class="tip-explanation">
-                            The top row needs only 1 more wall. The wall cannot go at X since that would create a dead end with no dead end node. X must therefore be part of the path. The bottom row still needs 2 more walls, so this technique doesn't apply there.
+                            The top row needs only 1 more <span class="theme-wall">wall</span>. The <span class="theme-wall">wall</span> cannot go at X since that would create a <span class="theme-deadend">dead end</span> with no <span class="theme-deadend">dead end</span> node. X must therefore be part of the path. The bottom row still needs 2 more <span class="theme-wall">walls</span>, so this technique doesn't apply there.
                         </div>
                     </div>
                 </div>
 
                 <div class="briefing-section">
                     <h3>Tip 6: Avoid 2×2 Path Squares</h3>
-                    <p>If placing a path would create a 2×2 square of paths, that cell must be a wall.</p>
+                    <p>If placing a path would create a 2×2 square of paths, that cell must be a <span class="theme-wall">wall</span>.</p>
                     <div class="tip-example">
                         <div>
                             <div class="tip-grid" style="grid-template-columns: repeat(3, 24px);">
@@ -232,14 +232,14 @@
                             </div>
                         </div>
                         <div class="tip-explanation">
-                            Three corners of a 2×2 are paths. The fourth <em>must</em> be a wall to avoid a 2×2 path square.
+                            Three corners of a 2×2 are paths. The fourth <em>must</em> be a <span class="theme-wall">wall</span> to avoid a 2×2 path square.
                         </div>
                     </div>
                 </div>
 
                 <div class="briefing-section">
-                    <h3>Tip 7: Dead End with One Wall Left</h3>
-                    <p>If a row needs exactly 1 more wall and has a dead end with no walls on either side, deduce the perpendicular walls and the rest of the row.</p>
+                    <h3>Tip 7: <span class="theme-deadend">Dead End</span> with One <span class="theme-wall">Wall</span> Left</h3>
+                    <p>If a row needs exactly 1 more <span class="theme-wall">wall</span> and has a <span class="theme-deadend">dead end</span> with no <span class="theme-wall">walls</span> on either side, deduce the perpendicular <span class="theme-wall">walls</span> and the rest of the row.</p>
                     <div class="tip-example">
                         <div>
                             <div style="display: flex; flex-direction: column; gap: 2px;">
@@ -276,7 +276,7 @@
                             </div>
                         </div>
                         <div class="tip-explanation">
-                            This row needs 1 wall. Since a dead end cell requires 3 walls, the row's only wall must be one of the two cells to the left or right of the dead end cell (X). Even though it cannot be deduced which of the two is the wall and which is part of the path, it is known that the two cells above and below must be walls, and also all other cells in the row are also part of the path.
+                            This row needs 1 <span class="theme-wall">wall</span>. Since a <span class="theme-deadend">dead end</span> cell requires 3 <span class="theme-wall">walls</span>, the row's only <span class="theme-wall">wall</span> must be one of the two cells to the left or right of the <span class="theme-deadend">dead end</span> cell (X). Even though it cannot be deduced which of the two is the <span class="theme-wall">wall</span> and which is part of the path, it is known that the two cells above and below must be <span class="theme-wall">walls</span>, and also all other cells in the row are also part of the path.
                         </div>
                     </div>
                 </div>
@@ -289,9 +289,16 @@
     </div>
 
     <div class="header-strip">
-        <button id="soundToggleBtn" class="cyber-btn btn-sound" title="Toggle Sound">
+        <button id="soundToggleBtn" class="cyber-btn btn-sound" title="Toggle Sound Effects">
             <span id="soundIcon">🔊</span>
         </button>
+        <button id="musicToggleBtn" class="cyber-btn btn-sound" title="Toggle Music">
+            <span id="musicIcon">🎵</span>
+        </button>
+        <!-- Theme selector hidden for now - keeping cyberpunk theme
+        <select id="themeSelect" class="theme-select" title="Select Theme">
+        </select>
+        -->
         <button id="briefingBtn" class="cyber-btn btn-amber">Briefing</button>
         <select id="gridSizeSelect" class="size-select">
             <option value="4">4x4</option>
@@ -369,6 +376,12 @@
             <div id="miniGrid" class="mini-grid"></div>
         </div>
     </div>
+
+    <!-- Theme System -->
+    <script src="themes/theme-base.js"></script>
+    <script src="themes/theme-manager.js"></script>
+    <script src="themes/theme-cyberpunk.js"></script>
+    <script src="themes/theme-garden.js"></script>
 
     <script src="game.js"></script>
 

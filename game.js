@@ -395,6 +395,11 @@ function tryGenerateMaze(numPaths) {
         return false;
     }
 
+    // Final check: ensure no 2x2 open areas (secret room check happens later in tryAddSecretRoom)
+    if (has2x2PathBlock()) {
+        return false;
+    }
+
     return true;
 }
 

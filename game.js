@@ -324,22 +324,60 @@ function init(resetStreak = true) {
     renderMiniMap();
 }
 
-// A* pathfinding-based maze generation
+// Choose maze generation algorithm randomly (50/50)
 function generateMaze() {
+    if (Math.random() < 0.5) {
+        generateMazeDFS();
+    } else {
+        generateMazeAStar();
+    }
+}
+
+// DFS maze generation - creates long natural walls
+function generateMazeDFS() {
+    solution = Array(SIZE).fill().map(() => Array(SIZE).fill(1));
+    const start = {r: Math.floor(Math.random()*SIZE), c: Math.floor(Math.random()*SIZE)};
+    solution[start.r][start.c] = 0;
+    let stack = [start], visited = new Set([`${start.r},${start.c}`]);
+
+    while(stack.length > 0) {
+        const curr = stack[stack.length-1];
+        let neighbors = [];
+        [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dr, dc]) => {
+            let nr=curr.r+dr, nc=curr.c+dc;
+            if(nr>=0 && nr<SIZE && nc>=0 && nc<SIZE && !visited.has(`${nr},${nc}`)) {
+                let pn = 0;
+                [[0,1],[0,-1],[1,0],[-1,0]].forEach(([ddr,ddc])=>{
+                    let nnr=nr+ddr, nnc=nc+ddc;
+                    if(nnr>=0&&nnr<SIZE&&nnc>=0&&nnc<SIZE&&solution[nnr][nnc]===0) pn++;
+                });
+                if(pn === 1) neighbors.push({r:nr,c:nc});
+            }
+        });
+        if(neighbors.length > 0) {
+            let next = neighbors[Math.floor(Math.random()*neighbors.length)];
+            solution[next.r][next.c] = 0;
+            visited.add(`${next.r},${next.c}`);
+            stack.push(next);
+        } else stack.pop();
+    }
+}
+
+// A* pathfinding-based maze generation
+function generateMazeAStar() {
     // Try with decreasing number of paths until successful
     for (let numPaths = SIZE - 2; numPaths >= 1; numPaths--) {
         for (let fullAttempt = 0; fullAttempt < 10; fullAttempt++) {
-            if (tryGenerateMaze(numPaths)) {
+            if (tryGenerateMazeAStar(numPaths)) {
                 return; // Success
             }
         }
     }
-    // Fallback: just carve a single path
-    solution = Array(SIZE).fill().map(() => Array(SIZE).fill(1));
-    solution[0][0] = 0;
+    // Fallback: use DFS method
+    generateMazeDFS();
 }
 
-function tryGenerateMaze(numPaths) {
+function tryGenerateMazeAStar(numPaths) {
     // Initialize grid: all walls (1)
     solution = Array(SIZE).fill().map(() => Array(SIZE).fill(1));
 

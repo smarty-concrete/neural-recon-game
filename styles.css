@@ -351,6 +351,15 @@ body {
 .label-container-col .count-ok {
     background: linear-gradient(to bottom, transparent 0%, rgba(0, 255, 159, 0.2) 100%);
 }
+.count-path-ok {
+    color: var(--neon-blue); text-shadow: 0 0 15px var(--neon-blue);
+}
+.label-container-row .count-path-ok {
+    background: linear-gradient(to right, transparent 0%, rgba(85, 119, 255, 0.2) 100%);
+}
+.label-container-col .count-path-ok {
+    background: linear-gradient(to bottom, transparent 0%, rgba(85, 119, 255, 0.2) 100%);
+}
 .count-over { color: var(--neon-red); text-shadow: 0 0 15px var(--neon-red); }
 
 /* Label anchor - diamond marker on labels */

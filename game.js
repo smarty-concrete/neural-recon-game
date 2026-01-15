@@ -1755,19 +1755,28 @@ function handleLabelClick(isRow, index) {
     const merged = Array(SIZE*SIZE).fill(0);
     layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
 
-    // Count current walls in this row/column
-    let wallCount = 0;
+    // Count current walls and paths in this row/column
+    let wallCount = 0, pathCount = 0;
     const target = isRow ? targets.r[index] : targets.c[index];
+    const expectedPaths = SIZE - target;
 
     for (let i = 0; i < SIZE; i++) {
         const idx = isRow ? index * SIZE + i : i * SIZE + index;
+        const r = Math.floor(idx / SIZE), c = idx % SIZE;
         if (merged[idx] === 1) wallCount++;
+        else if (merged[idx] === 2 || isTargetDeadEnd(r, c)) pathCount++;
     }
 
-    // Only fill if wall count matches target (green number)
-    if (wallCount !== target) return;
+    const wallsComplete = wallCount === target;
+    const pathsComplete = !wallsComplete && pathCount === expectedPaths;
 
-    // Check if there are any empty cells to fill first
+    // Only fill if walls are complete (green) or paths are complete (blue)
+    if (!wallsComplete && !pathsComplete) return;
+
+    // Determine what to fill: paths if walls complete, walls if paths complete
+    const fillType = wallsComplete ? 2 : 1; // 2 = path, 1 = wall
+
+    // Check if there are any empty cells to fill
     let hasEmpty = false;
     for (let i = 0; i < SIZE; i++) {
         const idx = isRow ? index * SIZE + i : i * SIZE + index;
@@ -1788,7 +1797,7 @@ function handleLabelClick(isRow, index) {
         forkAnchors[currentIdx] = {type: isRow ? 'row' : 'col', index: index};
     }
 
-    // Fill empty cells with path nodes
+    // Fill empty cells with the appropriate type
     for (let i = 0; i < SIZE; i++) {
         const idx = isRow ? index * SIZE + i : i * SIZE + index;
         const r = Math.floor(idx / SIZE), c = idx % SIZE;
@@ -1798,7 +1807,7 @@ function handleLabelClick(isRow, index) {
             let locked = false;
             for (let j = 0; j < currentIdx; j++) if (layers[j][idx] !== 0) locked = true;
             if (!locked) {
-                layers[currentIdx][idx] = 2;
+                layers[currentIdx][idx] = fillType;
             }
         }
     }
@@ -1908,24 +1917,48 @@ function update() {
     if(allWallsCorrect) { isWon = true; triggerVictorySequence(); return; }
 
     const rowTotals = Array(SIZE).fill(0), colTotals = Array(SIZE).fill(0);
+    const rowPathTotals = Array(SIZE).fill(0), colPathTotals = Array(SIZE).fill(0);
     const rowOk = Array(SIZE).fill(false), colOk = Array(SIZE).fill(false);
+    const rowPathOk = Array(SIZE).fill(false), colPathOk = Array(SIZE).fill(false);
     const fa = forkAnchors[currentIdx];
     const anchorColor = colors[currentIdx]; // green, amber, or magenta
     for(let r=0; r<SIZE; r++) {
-        let s = 0; for(let c=0; c<SIZE; c++) if(merged[r*SIZE+c] === 1) s++;
-        rowTotals[r] = s; rl[r].innerText = targets.r[r];
-        rowOk[r] = s === targets.r[r];
-        let rowClass = `count-neon ${rowOk[r] ? 'count-ok' : (s > targets.r[r] ? 'count-over' : '')}`;
+        let wallCount = 0, pathCount = 0;
+        for(let c=0; c<SIZE; c++) {
+            const idx = r*SIZE+c;
+            if(merged[idx] === 1) wallCount++;
+            // Count paths and dead ends (which are effectively paths)
+            else if(merged[idx] === 2 || isTargetDeadEnd(r, c)) pathCount++;
+        }
+        rowTotals[r] = wallCount;
+        rowPathTotals[r] = pathCount;
+        rl[r].innerText = targets.r[r];
+        rowOk[r] = wallCount === targets.r[r];
+        // Path is complete when we have exactly (SIZE - target walls) paths
+        const expectedPaths = SIZE - targets.r[r];
+        rowPathOk[r] = !rowOk[r] && pathCount === expectedPaths;
+        let rowClass = `count-neon ${rowOk[r] ? 'count-ok' : (rowPathOk[r] ? 'count-path-ok' : (wallCount > targets.r[r] ? 'count-over' : ''))}`;
         if (currentIdx > 0 && fa && fa.type === 'row' && fa.index === r) {
             rowClass += ` label-anchor label-anchor-${anchorColor}`;
         }
         rl[r].className = rowClass;
     }
     for(let c=0; c<SIZE; c++) {
-        let s = 0; for(let r=0; r<SIZE; r++) if(merged[r*SIZE+c] === 1) s++;
-        colTotals[c] = s; cl[c].innerText = targets.c[c];
-        colOk[c] = s === targets.c[c];
-        let colClass = `count-neon ${colOk[c] ? 'count-ok' : (s > targets.c[c] ? 'count-over' : '')}`;
+        let wallCount = 0, pathCount = 0;
+        for(let r=0; r<SIZE; r++) {
+            const idx = r*SIZE+c;
+            if(merged[idx] === 1) wallCount++;
+            // Count paths and dead ends (which are effectively paths)
+            else if(merged[idx] === 2 || isTargetDeadEnd(r, c)) pathCount++;
+        }
+        colTotals[c] = wallCount;
+        colPathTotals[c] = pathCount;
+        cl[c].innerText = targets.c[c];
+        colOk[c] = wallCount === targets.c[c];
+        // Path is complete when we have exactly (SIZE - target walls) paths
+        const expectedPaths = SIZE - targets.c[c];
+        colPathOk[c] = !colOk[c] && pathCount === expectedPaths;
+        let colClass = `count-neon ${colOk[c] ? 'count-ok' : (colPathOk[c] ? 'count-path-ok' : (wallCount > targets.c[c] ? 'count-over' : ''))}`;
         if (currentIdx > 0 && fa && fa.type === 'col' && fa.index === c) {
             colClass += ` label-anchor label-anchor-${anchorColor}`;
         }

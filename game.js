@@ -2638,7 +2638,68 @@ function triggerVictorySequence() {
     }, 100);
 }
 
-document.getElementById('gridSizeSelect').onchange = () => init(true);
+// Check if user has made any progress on the current puzzle
+function hasPuzzleProgress() {
+    for (let layer of layers) {
+        for (let val of layer) {
+            if (val !== 0) return true;
+        }
+    }
+    return false;
+}
+
+// Reset puzzle confirmation dialog
+const resetPuzzleDialog = document.getElementById('resetPuzzleDialog');
+let pendingResetAction = null;
+let pendingResetCancel = null;
+
+function confirmReset(action, onCancel) {
+    if (hasPuzzleProgress()) {
+        pendingResetAction = action;
+        pendingResetCancel = onCancel || null;
+        ChipSound.click();
+        resetPuzzleDialog.showModal();
+    } else {
+        action();
+    }
+}
+
+function cancelReset() {
+    ChipSound.click();
+    resetPuzzleDialog.close();
+    if (pendingResetCancel) {
+        pendingResetCancel();
+        pendingResetCancel = null;
+    }
+    pendingResetAction = null;
+}
+
+document.getElementById('resetPuzzleCancelBtn').onclick = cancelReset;
+
+document.getElementById('resetPuzzleConfirmBtn').onclick = () => {
+    ChipSound.click();
+    resetPuzzleDialog.close();
+    if (pendingResetAction) {
+        pendingResetAction();
+        pendingResetAction = null;
+    }
+    pendingResetCancel = null;
+};
+
+resetPuzzleDialog.addEventListener('click', (e) => {
+    if (e.target === resetPuzzleDialog) {
+        cancelReset();
+    }
+});
+
+document.getElementById('gridSizeSelect').onchange = () => {
+    const select = document.getElementById('gridSizeSelect');
+    const previousSize = SIZE;
+    confirmReset(
+        () => init(true),
+        () => { select.value = previousSize; }
+    );
+};
 document.getElementById('undoBtn').onclick = undo;
 document.getElementById('addLayerBtn').onclick = () => {
     if(currentIdx < 3) {
@@ -2672,7 +2733,7 @@ document.getElementById('discardBtn').onclick = () => {
         update();
     }
 };
-document.getElementById('newMazeBtn').onclick = () => init(true);
+document.getElementById('newMazeBtn').onclick = () => confirmReset(() => init(true));
 document.getElementById('nextLevelBtn').onclick = () => init(false);
 document.getElementById('decryptBtn').onclick = () => {
     ChipSound.click();

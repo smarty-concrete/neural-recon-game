@@ -411,7 +411,7 @@ body {
 .stat-value.highlight { color: var(--neon-amber); text-shadow: 0 0 10px var(--neon-amber); }
 
 .techno-babble {
-    font-family: var(--font-mono, 'Courier New', monospace); font-size: 10px; color: #666;
+    font-family: var(--font-mono, 'Courier New', monospace); font-size: 10px; color: #999;
     margin: 8px 0 12px 0; letter-spacing: 1px; text-transform: uppercase;
 }
 

@@ -416,6 +416,10 @@ function getAnimationDelay() {
     // Returns negative delay to sync animations to page load time
     return `-${(Date.now() - pageLoadTime) % 100000}ms`;
 }
+function setAnimationDelay(element) {
+    // Set CSS custom property for animation delay
+    element.style.setProperty('--anim-delay', getAnimationDelay());
+}
 
 let SIZE = 8;
 let solution = [];
@@ -427,6 +431,7 @@ let stockpilePos = null; // {r, c} position of data stockpile, or null if none
 let isWon = false;
 let showKey = false;
 let undoState = null; // Single undo state: {layers, currentIdx, forkAnchors}
+let hintsEnabled = true; // Hints toggle state
 
 function saveUndoState() {
     undoState = {
@@ -1677,8 +1682,8 @@ function handleCellAction(idx) {
 
         // If starting on a dead end node or stockpile, start drawing paths
         if (isDeadEnd || isStockpile) {
-            // Check neighbors (only for dead ends, not stockpile)
-            if (isDeadEnd) {
+            // Check neighbors (only for dead ends, not stockpile) - requires hints
+            if (isDeadEnd && hintsEnabled) {
                 const merged = Array(SIZE*SIZE).fill(0);
                 layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
 
@@ -1877,6 +1882,8 @@ function handleLabelClick(isRow, index) {
     const pathsComplete = !wallsComplete && pathCount === expectedPaths;
 
     // Only fill if walls are complete (green) or paths are complete (blue)
+    // This feature requires hints to be enabled
+    if (!hintsEnabled) return;
     if (!wallsComplete && !pathsComplete) return;
 
     // Determine what to fill: paths if walls complete, walls if paths complete
@@ -2042,7 +2049,7 @@ function update() {
         rowOk[r] = wallCount === targets.r[r];
         // Path is complete when we have exactly (SIZE - target walls) paths
         const expectedPaths = SIZE - targets.r[r];
-        rowPathOk[r] = !rowOk[r] && pathCount === expectedPaths;
+        rowPathOk[r] = hintsEnabled && !rowOk[r] && pathCount === expectedPaths;
         let rowClass = `count-neon ${rowOk[r] ? 'count-ok' : (rowPathOk[r] ? 'count-path-ok' : (wallCount > targets.r[r] ? 'count-over' : ''))}`;
         if (currentIdx > 0 && fa && fa.type === 'row' && fa.index === r) {
             rowClass += ` label-anchor label-anchor-${anchorColor}`;
@@ -2063,7 +2070,7 @@ function update() {
         colOk[c] = wallCount === targets.c[c];
         // Path is complete when we have exactly (SIZE - target walls) paths
         const expectedPaths = SIZE - targets.c[c];
-        colPathOk[c] = !colOk[c] && pathCount === expectedPaths;
+        colPathOk[c] = hintsEnabled && !colOk[c] && pathCount === expectedPaths;
         let colClass = `count-neon ${colOk[c] ? 'count-ok' : (colPathOk[c] ? 'count-path-ok' : (wallCount > targets.c[c] ? 'count-over' : ''))}`;
         if (currentIdx > 0 && fa && fa.type === 'col' && fa.index === c) {
             colClass += ` label-anchor label-anchor-${anchorColor}`;
@@ -2304,7 +2311,7 @@ function update() {
             anchor.className = 'fork-anchor';
             anchor.style.borderColor = `var(--neon-${colors[currentIdx]})`;
             anchor.style.boxShadow = `0 0 10px var(--neon-${colors[currentIdx]})`;
-            anchor.style.animationDelay = getAnimationDelay();
+            setAnimationDelay(anchor);
             cell.appendChild(anchor);
         }
 
@@ -2321,7 +2328,7 @@ function update() {
                 stockpile.className = 'stockpile' + (stockpileInWalledRoom ? ' stockpile-complete' : '');
                 const icon = document.createElement('div');
                 icon.className = 'stockpile-icon';
-                icon.style.animationDelay = getAnimationDelay();
+                setAnimationDelay(icon);
                 stockpile.appendChild(icon);
             }
             cell.appendChild(stockpile);
@@ -2331,7 +2338,7 @@ function update() {
             // Determine node state
             let nodeState = 'normal';
             if (erraticIndices.has(i) || playerWalls === 4) nodeState = 'erratic';
-            else if (playerWalls === 3) nodeState = 'complete';
+            else if (hintsEnabled && playerWalls === 3) nodeState = 'complete';
             else if (connectedToManualPath >= 2) nodeState = 'conflict';
 
             let node;
@@ -2347,16 +2354,16 @@ function update() {
                 node.className = nodeClass;
                 const core = document.createElement('div');
                 core.className = 'node-core';
-                core.style.animationDelay = getAnimationDelay();
+                setAnimationDelay(core);
                 node.appendChild(core);
             }
-            node.style.animationDelay = getAnimationDelay();
+            setAnimationDelay(node);
             cell.appendChild(node);
         } else if(playerWalls >= 3 && merged[i] !== 1) {
             const box = document.createElement('div');
             box.className = 'invalid-box';
             if ((rowTotals[r] > targets.r[r] || colTotals[c] > targets.c[c]) || merged[i] === 2) box.classList.add('invalid-box-high');
-            box.style.animationDelay = getAnimationDelay();
+            setAnimationDelay(box);
             box.innerHTML = '<div class="invalid-x"></div>';
             cell.appendChild(box);
         }
@@ -2374,7 +2381,7 @@ function update() {
                         let u = Math.min(i, nIdx), v = Math.max(i, nIdx);
                         if (clumps.has(i) || clumps.has(nIdx)) trace.classList.add('trace-error');
                         else if (erraticIndices.has(i)) trace.classList.add('trace-erratic');
-                        else if (authenticatedEdges.has(`${u}-${v}`) || (complete3x3Cells.has(i) && complete3x3Cells.has(nIdx))) {
+                        else if (hintsEnabled && (authenticatedEdges.has(`${u}-${v}`) || (complete3x3Cells.has(i) && complete3x3Cells.has(nIdx)))) {
                             // Use blue for traces inside the 3x3 data node, green for authenticated paths
                             const bothIn3x3 = complete3x3Cells.has(i) && complete3x3Cells.has(nIdx);
                             trace.classList.add(bothIn3x3 ? 'trace-complete-blue' : 'trace-complete');
@@ -2408,7 +2415,7 @@ function update() {
                     const errorClass = isError ? (isCurrentLayer ? 'wall-error' : 'wall-error-dim') : '';
                     wall.className = `wall wall-l${lIdx} ${isCurrentLayer ? '' : 'opacity-40'} ${errorClass}`;
                 }
-                if (isError && isCurrentLayer) wall.style.animationDelay = getAnimationDelay();
+                if (isError && isCurrentLayer) setAnimationDelay(wall);
                 cell.appendChild(wall);
             } else if (layer[i] === 2) {
                 const isCurrentLayer = lIdx === currentIdx;
@@ -2418,8 +2425,8 @@ function update() {
                 let pathState = 'normal';
                 if (clumps.has(i)) pathState = 'error';
                 else if (erraticIndices.has(i)) pathState = 'erratic';
-                else if (complete3x3Cells.has(i)) pathState = 'complete-blue';
-                else if (authenticatedIndices.has(i)) pathState = 'complete';
+                else if (hintsEnabled && complete3x3Cells.has(i)) pathState = 'complete-blue';
+                else if (hintsEnabled && authenticatedIndices.has(i)) pathState = 'complete';
 
                 // Use theme renderer if available
                 let dot;
@@ -2434,7 +2441,7 @@ function update() {
                     else if (pathState === 'complete') dotClass += ' path-dot-complete';
                     dot.className = dotClass;
                 }
-                if (hasAnimation) dot.style.animationDelay = getAnimationDelay();
+                if (hasAnimation) setAnimationDelay(dot);
                 cell.appendChild(dot);
             }
         });
@@ -2524,10 +2531,10 @@ function triggerVictorySequence() {
         if(isTargetDeadEnd(r, c)) {
             const node = document.createElement('div');
             node.className = 'node node-complete';
-            node.style.animationDelay = getAnimationDelay();
+            setAnimationDelay(node);
             const core = document.createElement('div');
             core.className = 'node-core';
-            core.style.animationDelay = getAnimationDelay();
+            setAnimationDelay(core);
             node.appendChild(core);
             cell.appendChild(node);
         }
@@ -2538,7 +2545,7 @@ function triggerVictorySequence() {
             stockpile.className = 'stockpile stockpile-complete';
             const icon = document.createElement('div');
             icon.className = 'stockpile-icon';
-            icon.style.animationDelay = getAnimationDelay();
+            setAnimationDelay(icon);
             stockpile.appendChild(icon);
             cell.appendChild(stockpile);
         }
@@ -2801,6 +2808,45 @@ document.getElementById('musicToggleBtn').onclick = () => {
         btn.title = 'Stop Music';
     }
 };
+
+// Hints toggle with cookie persistence
+function loadHintsSetting() {
+    const match = document.cookie.match(/neuralReconHints=([^;]+)/);
+    if (match) {
+        hintsEnabled = match[1] === 'true';
+    }
+    // Update UI to match loaded state
+    const btn = document.getElementById('hintsToggleBtn');
+    const state = document.getElementById('hintsToggleState');
+    if (btn && state) {
+        btn.classList.toggle('off', !hintsEnabled);
+        state.textContent = hintsEnabled ? 'ON' : 'OFF';
+    }
+}
+
+function saveHintsSetting() {
+    const expires = new Date(Date.now() + 365 * 5 * 24 * 60 * 60 * 1000).toUTCString();
+    document.cookie = `neuralReconHints=${hintsEnabled}; expires=${expires}; path=/; SameSite=Lax`;
+}
+
+document.getElementById('hintsToggleBtn').onclick = () => {
+    ChipSound.click();
+    hintsEnabled = !hintsEnabled;
+    saveHintsSetting();
+    const btn = document.getElementById('hintsToggleBtn');
+    const state = document.getElementById('hintsToggleState');
+    if (hintsEnabled) {
+        btn.classList.remove('off');
+        state.textContent = 'ON';
+    } else {
+        btn.classList.add('off');
+        state.textContent = 'OFF';
+    }
+    update(); // Refresh display to show/hide hints
+};
+
+// Load hints setting on startup
+loadHintsSetting();
 
 // Stats dialog
 let currentStatsSize = 4;

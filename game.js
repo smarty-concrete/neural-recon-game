@@ -2005,6 +2005,91 @@ function isTargetDeadEnd(r, c) {
     return walls >= 3;
 }
 
+// Check if player's current state is a valid alternate solution
+// Returns true if: row/col counts match, no 2x2 path blocks, paths connected
+function isValidAlternateSolution(merged) {
+    // 1. Check row wall counts match targets
+    for (let r = 0; r < SIZE; r++) {
+        let wallCount = 0;
+        for (let c = 0; c < SIZE; c++) {
+            if (merged[r * SIZE + c] === 1) wallCount++;
+        }
+        if (wallCount !== targets.r[r]) return false;
+    }
+
+    // 2. Check column wall counts match targets
+    for (let c = 0; c < SIZE; c++) {
+        let wallCount = 0;
+        for (let r = 0; r < SIZE; r++) {
+            if (merged[r * SIZE + c] === 1) wallCount++;
+        }
+        if (wallCount !== targets.c[c]) return false;
+    }
+
+    // 3. Check no 2x2 path blocks (except around stockpile)
+    for (let r = 0; r < SIZE - 1; r++) {
+        for (let c = 0; c < SIZE - 1; c++) {
+            const corners = [
+                r * SIZE + c,
+                r * SIZE + c + 1,
+                (r + 1) * SIZE + c,
+                (r + 1) * SIZE + c + 1
+            ];
+
+            // Check if all 4 corners are paths (not walls)
+            if (corners.every(idx => merged[idx] !== 1)) {
+                // Allow 2x2 paths near stockpile (it's in a 3x3 room)
+                if (stockpilePos) {
+                    let nearStockpile = false;
+                    for (const idx of corners) {
+                        const cr = Math.floor(idx / SIZE), cc = idx % SIZE;
+                        const dr = Math.abs(cr - stockpilePos.r);
+                        const dc = Math.abs(cc - stockpilePos.c);
+                        if (dr <= 1 && dc <= 1) nearStockpile = true;
+                    }
+                    if (nearStockpile) continue;
+                }
+                return false; // Invalid 2x2 path block
+            }
+        }
+    }
+
+    // 4. Check all paths are connected (single connected component)
+    // Find all path cells
+    const pathCells = [];
+    for (let i = 0; i < SIZE * SIZE; i++) {
+        if (merged[i] !== 1) pathCells.push(i);
+    }
+
+    if (pathCells.length === 0) return false;
+
+    // BFS from first path cell
+    const visited = new Set();
+    const stack = [pathCells[0]];
+    visited.add(pathCells[0]);
+
+    while (stack.length > 0) {
+        const idx = stack.pop();
+        const r = Math.floor(idx / SIZE), c = idx % SIZE;
+
+        [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dr, dc]) => {
+            const nr = r + dr, nc = c + dc;
+            if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE) {
+                const nIdx = nr * SIZE + nc;
+                if (merged[nIdx] !== 1 && !visited.has(nIdx)) {
+                    visited.add(nIdx);
+                    stack.push(nIdx);
+                }
+            }
+        });
+    }
+
+    // All path cells should be visited
+    if (visited.size !== pathCells.length) return false;
+
+    return true;
+}
+
 function getShortestPathBetween(merged, startIdx, endIdx) {
     let queue = [[startIdx]];
     let visited = new Set([startIdx]);
@@ -2035,13 +2120,14 @@ function update() {
     const merged = Array(SIZE*SIZE).fill(0);
     layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
 
+    // Check for win: either exact match OR valid alternate solution
     let allWallsCorrect = true;
     for(let i=0; i<SIZE*SIZE; i++) {
         const r = Math.floor(i/SIZE), c = i%SIZE;
         if(solution[r][c] === 1 && merged[i] !== 1) allWallsCorrect = false;
         if(merged[i] === 1 && solution[r][c] !== 1) allWallsCorrect = false;
     }
-    if(allWallsCorrect) { isWon = true; triggerVictorySequence(); return; }
+    if(allWallsCorrect || isValidAlternateSolution(merged)) { isWon = true; triggerVictorySequence(); return; }
 
     const rowTotals = Array(SIZE).fill(0), colTotals = Array(SIZE).fill(0);
     const rowPathTotals = Array(SIZE).fill(0), colPathTotals = Array(SIZE).fill(0);

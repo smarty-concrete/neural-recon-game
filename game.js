@@ -2391,7 +2391,7 @@ function update() {
 
         layers.forEach((layer, lIdx) => {
             if (layer[i] === 1) {
-                const isError = rowTotals[r] > targets.r[r] || colTotals[c] > targets.c[c];
+                const isError = hintsEnabled && (rowTotals[r] > targets.r[r] || colTotals[c] > targets.c[c]);
                 const isCurrentLayer = lIdx === currentIdx;
 
                 // Use theme renderer if available

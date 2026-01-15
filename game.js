@@ -2258,12 +2258,23 @@ function update() {
             let corners = [i, i+1, i+SIZE, i+SIZE+1];
             let pathCount = 0;
             let deadEndCount = 0;
+            let nearStockpile = false;
 
             corners.forEach((idx) => {
                 let cr = Math.floor(idx/SIZE), cc = idx%SIZE;
                 if(merged[idx] === 2) pathCount++;
                 else if(isTargetDeadEnd(cr, cc)) deadEndCount++;
+                // Check if this corner is the stockpile or orthogonally adjacent to it
+                if(stockpilePos) {
+                    const dr = Math.abs(cr - stockpilePos.r);
+                    const dc = Math.abs(cc - stockpilePos.c);
+                    if((dr === 0 && dc <= 1) || (dc === 0 && dr <= 1)) nearStockpile = true;
+                }
             });
+
+            // Skip clump detection if any corner is the stockpile or adjacent to it
+            // (stockpile is part of a 3x3 room, so 2x2 paths around it are expected)
+            if (nearStockpile) continue;
 
             // Mark as clump if path nodes + dead end nodes fill the 2x2 square
             // BUT exempt if all corners are part of a complete 3x3 path with stockpile
@@ -2711,29 +2722,38 @@ document.getElementById('musicToggleBtn').onclick = () => {
 };
 
 // Stats dialog
+let currentStatsSize = 4;
+
+function updateSizeStats(size) {
+    const stats = PlayerStats.get();
+    const sizeStats = stats.bySize[String(size)] || { wins: 0, bestStreak: 0, fastestTime: null, fewestMoves: null };
+
+    document.getElementById('statSizeWins').textContent = sizeStats.wins;
+    document.getElementById('statSizeStreak').textContent = sizeStats.bestStreak;
+    document.getElementById('statSizeFastest').textContent = PlayerStats.formatTime(sizeStats.fastestTime);
+    document.getElementById('statSizeMoves').textContent = sizeStats.fewestMoves !== null ? sizeStats.fewestMoves : '--';
+}
+
 function updateStatsDisplay() {
     const stats = PlayerStats.get();
     document.getElementById('statTotalWins').textContent = stats.totalWins;
     document.getElementById('statTotalTime').textContent = PlayerStats.formatTotalTime(stats.totalTimePlayed);
     document.getElementById('statTotalMoves').textContent = stats.totalMoves;
 
-    // By size stats with all per-size records
-    const bySizeContainer = document.getElementById('statsBySize');
-    bySizeContainer.innerHTML = '';
-    for (let size = 4; size <= 8; size++) {
-        const sizeStats = stats.bySize[String(size)] || { wins: 0, bestStreak: 0, fastestTime: null, fewestMoves: null };
-        const div = document.createElement('div');
-        div.className = 'size-stat';
-        div.innerHTML = `
-            <div class="size-stat-header">${size}×${size}</div>
-            <div class="size-stat-row"><span class="stat-label">Wins</span><span class="stat-value">${sizeStats.wins}</span></div>
-            <div class="size-stat-row"><span class="stat-label">Streak</span><span class="stat-value">${sizeStats.bestStreak}</span></div>
-            <div class="size-stat-row"><span class="stat-label">Best</span><span class="stat-value">${PlayerStats.formatTime(sizeStats.fastestTime)}</span></div>
-            <div class="size-stat-row"><span class="stat-label">Moves</span><span class="stat-value">${sizeStats.fewestMoves !== null ? sizeStats.fewestMoves : '--'}</span></div>
-        `;
-        bySizeContainer.appendChild(div);
-    }
+    // Update the currently selected size tab
+    updateSizeStats(currentStatsSize);
 }
+
+// Stats size tab switching
+document.querySelectorAll('.stats-tab').forEach(tab => {
+    tab.onclick = () => {
+        ChipSound.click();
+        document.querySelectorAll('.stats-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentStatsSize = parseInt(tab.dataset.size);
+        updateSizeStats(currentStatsSize);
+    };
+});
 
 document.getElementById('statsBtn').onclick = () => {
     ChipSound.click();

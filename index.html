@@ -396,7 +396,31 @@
                     <span id="statTotalMoves" class="stat-value">0</span>
                 </div>
                 <div class="stats-section-title">By Grid Size</div>
-                <div id="statsBySize" class="stats-by-size"></div>
+                <div class="stats-size-tabs">
+                    <button class="stats-tab active" data-size="4">4×4</button>
+                    <button class="stats-tab" data-size="5">5×5</button>
+                    <button class="stats-tab" data-size="6">6×6</button>
+                    <button class="stats-tab" data-size="7">7×7</button>
+                    <button class="stats-tab" data-size="8">8×8</button>
+                </div>
+                <div id="statsSizeContent" class="stats-size-content">
+                    <div class="stat-row">
+                        <span class="stat-label">Puzzles Solved:</span>
+                        <span id="statSizeWins" class="stat-value">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Best Streak:</span>
+                        <span id="statSizeStreak" class="stat-value">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Fastest Time:</span>
+                        <span id="statSizeFastest" class="stat-value">--:--</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Fewest Moves:</span>
+                        <span id="statSizeMoves" class="stat-value">--</span>
+                    </div>
+                </div>
             </div>
             <div class="stats-buttons">
                 <button id="statsCloseBtn" class="cyber-btn">Dismiss</button>

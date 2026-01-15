@@ -457,30 +457,40 @@ body {
     border-bottom: 1px solid rgba(255, 170, 0, 0.3); padding-bottom: 4px;
 }
 
-.stats-by-size {
-    display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
-    margin-top: 8px;
+.stats-size-tabs {
+    display: flex; gap: 4px; margin-top: 8px;
 }
 
-.size-stat {
-    text-align: center; padding: 6px 2px;
+.stats-tab {
+    flex: 1; padding: 6px 4px; font-size: 10px;
+    font-family: var(--font-mono, 'Courier New', monospace);
+    background: rgba(0, 243, 255, 0.05);
+    border: 1px solid rgba(0, 243, 255, 0.2);
+    color: #888; cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.stats-tab:hover {
+    background: rgba(0, 243, 255, 0.1);
+    color: var(--neon-cyan);
+}
+
+.stats-tab.active {
+    background: rgba(0, 243, 255, 0.15);
+    border-color: var(--neon-cyan);
+    color: var(--neon-cyan);
+    text-shadow: 0 0 8px var(--neon-cyan);
+}
+
+.stats-size-content {
+    margin-top: 8px; padding: 12px;
     background: rgba(0, 243, 255, 0.05);
     border: 1px solid rgba(0, 243, 255, 0.2);
 }
 
-.size-stat-header {
-    color: var(--neon-cyan); font-size: 10px; font-weight: bold;
-    margin-bottom: 4px; border-bottom: 1px solid rgba(0, 243, 255, 0.2);
-    padding-bottom: 2px;
+.stats-size-content .stat-row {
+    margin: 6px 0;
 }
-
-.size-stat-row {
-    display: flex; justify-content: space-between; font-size: 9px;
-    margin: 2px 0; padding: 0 2px;
-}
-
-.size-stat-row .stat-label { color: #888; }
-.size-stat-row .stat-value { color: var(--neon-green); }
 
 .stats-buttons {
     display: flex; gap: 12px; justify-content: center; margin-top: 20px;

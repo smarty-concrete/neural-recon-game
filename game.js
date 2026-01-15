@@ -2747,8 +2747,28 @@ document.getElementById('decryptBtn').onclick = () => {
         section.style.display = 'none';
     }
 };
-document.getElementById('briefingBtn').onclick = () => { ChipSound.click(); document.getElementById('briefingOverlay').style.display = 'flex'; };
+document.getElementById('briefingBtn').onclick = () => {
+    ChipSound.click();
+    document.getElementById('menuOverlay').classList.remove('visible');
+    document.getElementById('briefingOverlay').style.display = 'flex';
+};
 document.getElementById('closeBriefingBtn').onclick = () => { ChipSound.click(); document.getElementById('briefingOverlay').style.display = 'none'; };
+
+// Slide-in menu
+document.getElementById('menuBtn').onclick = () => {
+    ChipSound.click();
+    document.getElementById('menuOverlay').classList.add('visible');
+};
+document.getElementById('menuCloseBtn').onclick = () => {
+    ChipSound.click();
+    document.getElementById('menuOverlay').classList.remove('visible');
+};
+document.getElementById('menuOverlay').onclick = (e) => {
+    if (e.target.id === 'menuOverlay') {
+        ChipSound.click();
+        document.getElementById('menuOverlay').classList.remove('visible');
+    }
+};
 
 // Sound toggle button
 document.getElementById('soundToggleBtn').onclick = () => {
@@ -2818,6 +2838,7 @@ document.querySelectorAll('.stats-tab').forEach(tab => {
 
 document.getElementById('statsBtn').onclick = () => {
     ChipSound.click();
+    document.getElementById('menuOverlay').classList.remove('visible');
     // Set active tab to current puzzle size
     currentStatsSize = SIZE;
     document.querySelectorAll('.stats-tab').forEach(t => {

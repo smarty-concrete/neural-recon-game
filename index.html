@@ -289,17 +289,7 @@
     </div>
 
     <div class="header-strip">
-        <button id="soundToggleBtn" class="cyber-btn btn-sound" title="Toggle Sound Effects">
-            <span id="soundIcon">🔊</span>
-        </button>
-        <button id="musicToggleBtn" class="cyber-btn btn-sound" title="Toggle Music">
-            <span id="musicIcon">🎵</span>
-        </button>
-        <!-- Theme selector hidden for now - keeping cyberpunk theme
-        <select id="themeSelect" class="theme-select" title="Select Theme">
-        </select>
-        -->
-        <button id="briefingBtn" class="cyber-btn btn-amber">Briefing</button>
+        <button id="menuBtn" class="cyber-btn btn-menu" title="Menu">☰</button>
         <select id="gridSizeSelect" class="size-select">
             <option value="4">4x4</option>
             <option value="5">5x5</option>
@@ -317,7 +307,34 @@
                 <span id="layerName" class="layer-name">Root</span>
             </div>
         </div>
-        <button id="statsBtn" class="cyber-btn" title="Player Stats">Stats</button>
+    </div>
+
+    <!-- Slide-in Menu -->
+    <div id="menuOverlay" class="menu-overlay">
+        <div id="slideMenu" class="slide-menu">
+            <div class="menu-header">
+                <span class="menu-title">MENU</span>
+                <button id="menuCloseBtn" class="menu-close-btn">✕</button>
+            </div>
+            <div class="menu-items">
+                <button id="briefingBtn" class="menu-item">
+                    <span class="menu-item-icon">📋</span>
+                    <span class="menu-item-label">Briefing</span>
+                </button>
+                <button id="statsBtn" class="menu-item">
+                    <span class="menu-item-label">Stats</span>
+                </button>
+                <div class="menu-divider"></div>
+                <button id="soundToggleBtn" class="menu-item">
+                    <span id="soundIcon" class="menu-item-icon">🔊</span>
+                    <span class="menu-item-label">Sound Effects</span>
+                </button>
+                <button id="musicToggleBtn" class="menu-item">
+                    <span id="musicIcon" class="menu-item-icon">🎵</span>
+                    <span class="menu-item-label">Music</span>
+                </button>
+            </div>
+        </div>
     </div>
 
     <div class="mode-strip">

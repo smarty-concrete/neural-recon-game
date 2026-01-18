@@ -104,12 +104,27 @@ body {
 .btn-hint {
     border-color: var(--btn-hint-color, var(--neon-yellow, #ffcc00));
     color: var(--btn-hint-color, var(--neon-yellow, #ffcc00));
-    font-size: 14px; font-weight: bold; padding: 4px 10px; min-width: 32px;
+    font-size: 14px; font-weight: bold; padding: 3px 10px; min-width: 32px;
 }
 .btn-hint:hover:not(:disabled) {
     background: var(--btn-hint-color, var(--neon-yellow, #ffcc00));
     color: #000;
     box-shadow: 0 0 15px var(--btn-hint-color, var(--neon-yellow, #ffcc00));
+}
+
+/* Separator between hint button and fork buttons */
+#hintBtn {
+    margin-right: 4px;
+    position: relative;
+}
+#hintBtn::after {
+    content: '';
+    position: absolute;
+    right: -8px;
+    top: 15%;
+    height: 70%;
+    width: 1px;
+    background: linear-gradient(to bottom, transparent, rgba(255, 255, 255, 0.3), transparent);
 }
 
 /* Slide-in Menu */
@@ -427,6 +442,7 @@ body {
 .mode-btn[data-mode="path"].active { border-color: #fff; color: #fff; box-shadow: 0 0 8px rgba(255, 255, 255, 0.3); }
 .mode-btn[data-mode="erase"].active { border-color: var(--neon-red); color: var(--neon-red); box-shadow: 0 0 8px rgba(255, 51, 102, 0.3); }
 .mode-btn[data-mode="smart"].active { border-color: var(--neon-green); color: var(--neon-green); box-shadow: 0 0 8px rgba(0, 255, 159, 0.3); }
+.mode-btn[data-mode="hint"].active { border-color: var(--neon-yellow); color: var(--neon-yellow); box-shadow: 0 0 8px rgba(255, 204, 0, 0.3); }
 
 /* Mode button icons */
 .mode-icon {
@@ -451,6 +467,12 @@ body {
 }
 .mode-icon-smart::after {
     content: '⚡'; color: var(--neon-green);
+}
+.mode-icon-hint {
+    font-size: 12px; font-weight: bold;
+}
+.mode-icon-hint::after {
+    content: '?'; color: var(--neon-yellow);
 }
 
 .grid-wrapper {

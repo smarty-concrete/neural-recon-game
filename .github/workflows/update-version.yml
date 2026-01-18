@@ -25,16 +25,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Inject version into index.html
+      - name: Inject version into index.html and service-worker.js
         run: |
-          COMMIT_COUNT=$(git rev-list --count HEAD)
           SHORT_SHA=$(git rev-parse --short HEAD)
-          VERSION="v1.${COMMIT_COUNT}.${SHORT_SHA}"
+          VERSION="v1.${{ github.run_number }}.${SHORT_SHA}"
           echo "Injecting version: $VERSION"
           sed -i "s|<div class=\"menu-version\">v[^<]*</div>|<div class=\"menu-version\">$VERSION</div>|g" index.html
+          sed -i "s|neural-recon-v[^']*|neural-recon-$VERSION|g" service-worker.js
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

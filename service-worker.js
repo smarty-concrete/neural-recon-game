@@ -1,4 +1,4 @@
-﻿const CACHE_NAME = 'neural-recon-cache';
+﻿const CACHE_NAME = 'neural-recon-v0.0.0';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',

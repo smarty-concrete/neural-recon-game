@@ -464,6 +464,12 @@
                     <button id="nextLevelBtn" class="cyber-btn btn-action next-level-btn">Initialize Next Sequence</button>
                 </div>
             </div>
+            <!-- Hint Toast -->
+            <div id="hintToast" class="hint-toast">
+                <div class="hint-toast-content">
+                    <span id="hintMessage" class="hint-toast-message"></span>
+                </div>
+            </div>
         </div>
         <div class="grid-spacer"></div>
     </div>
@@ -539,17 +545,6 @@
             <div class="confirm-dialog-buttons">
                 <button id="resetPuzzleCancelBtn" class="cyber-btn">Cancel</button>
                 <button id="resetPuzzleConfirmBtn" class="cyber-btn btn-kill">Initialize</button>
-            </div>
-        </div>
-    </dialog>
-
-    <!-- Hint Dialog -->
-    <dialog id="hintDialog" class="hint-dialog">
-        <div class="hint-dialog-content">
-            <div class="hint-dialog-title">ANALYSIS</div>
-            <p id="hintMessage" class="hint-dialog-message"></p>
-            <div class="hint-dialog-buttons">
-                <button id="hintDismissBtn" class="cyber-btn btn-hint">Got It</button>
             </div>
         </div>
     </dialog>

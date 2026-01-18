@@ -57,13 +57,13 @@ const ThemeCyberpunk = Object.assign({}, ThemeBase, {
         },
         // Briefing terminology
         briefingTitle: 'Mission Briefing',
-        wall: 'Wall',
-        path: 'Path',
-        deadEnd: 'Dead End Node',
-        stockpile: 'Data Stockpile',
+        wall: 'wall',
+        path: 'path',
+        deadEnd: 'dead end',
+        stockpile: 'Data Cache',
         vault: 'Data Vault',
         stockpileDesc: 'Located inside a 3×3 vault surrounded by walls with one door. Turns green when the vault is properly sealed.',
-        vaultDesc: 'On 6×6+ grids, look for a 3×3 vault with 11 walls around it and 1 door. The vault contains a Data Stockpile somewhere inside.'
+        vaultDesc: 'On 6×6+ grids, look for a 3×3 vault with 11 walls around it and 1 door. The vault contains a Data Cache somewhere inside.'
     },
     
     babble: {

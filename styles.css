@@ -820,41 +820,43 @@ body {
     padding: 8px 20px; font-size: 11px;
 }
 
-/* Hint Dialog */
-.hint-dialog {
-    background: rgba(5, 5, 6, 0.98);
+/* Hint Toast */
+.hint-toast {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(5, 5, 6, 0.95);
     border: 2px solid var(--btn-hint-color, var(--neon-yellow, #ffcc00));
-    box-shadow: 0 0 30px rgba(255, 204, 0, 0.4);
-    padding: 0; max-width: 350px;
+    box-shadow: 0 0 20px rgba(255, 204, 0, 0.4);
+    padding: 12px 18px;
+    max-width: 320px;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+    cursor: pointer;
+    pointer-events: none;
 }
 
-.hint-dialog::backdrop {
-    background: rgba(0, 0, 0, 0.8);
+.hint-toast.visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
 }
 
-.hint-dialog-content {
-    padding: 24px;
+.hint-toast.fading {
+    opacity: 0;
 }
 
-.hint-dialog-title {
-    font-size: 1.1rem; font-weight: 900; color: var(--btn-hint-color, var(--neon-yellow, #ffcc00));
-    text-shadow: 0 0 15px var(--btn-hint-color, var(--neon-yellow, #ffcc00));
-    letter-spacing: 2px; margin-bottom: 16px; text-align: center;
-    font-family: var(--font-heading, 'Courier New', monospace);
+.hint-toast-content {
+    text-align: center;
 }
 
-.hint-dialog-message {
+.hint-toast-message {
     font-family: var(--font-mono, 'Courier New', monospace);
-    font-size: 12px; color: #ccc; text-align: center;
-    margin-bottom: 20px; line-height: 1.5;
-}
-
-.hint-dialog-buttons {
-    display: flex; gap: 12px; justify-content: center;
-}
-
-.hint-dialog-buttons .cyber-btn {
-    padding: 8px 20px; font-size: 11px;
+    font-size: 12px;
+    color: #ccc;
+    line-height: 1.5;
 }
 
 /* Hint Highlight Styles */

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Cyberpunk Theme
  * The default neon-noir hacker aesthetic
  */
@@ -32,7 +32,7 @@ const ThemeCyberpunk = Object.assign({}, ThemeBase, {
     },
 
     fonts: {
-        primary: "'Segoe UI', system-ui, -apple-system, sans-serif",
+        primary: "monospace",
         mono: "'Courier New', monospace",
         display: "'Courier New', monospace",
         heading: "'Courier New', monospace"

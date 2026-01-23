@@ -28,6 +28,11 @@
     --safe-area-right: env(safe-area-inset-right, 0px);
 }
 
+/* Universal monospace font */
+*, *::before, *::after {
+    font-family: monospace;
+}
+
 html, body {
     width: 100%; height: 100%; margin: 0; padding: 0; overflow-x: hidden;
     position: fixed; overscroll-behavior-y: contain;
@@ -35,11 +40,12 @@ html, body {
     user-select: none; -webkit-user-select: none;
     /* Prevent pull-to-refresh on iOS */
     overscroll-behavior: none;
+    font-family: monospace;
 }
 
 body {
     background-color: var(--bg-black);
-    color: #fff; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #fff; font-family: monospace;
     display: flex; flex-direction: column; align-items: center; overflow-y: auto;
     /* Account for iOS safe areas */
     padding-top: var(--safe-area-top);
@@ -64,6 +70,7 @@ body {
     padding: 4px 10px; font-size: 10px; font-weight: 900;
     text-transform: uppercase; letter-spacing: 1px; transition: 0.2s; border-radius: 2px;
     touch-action: manipulation;
+    font-family: monospace;
 }
 .cyber-btn:hover:not(:disabled) {
     background: var(--btn-default-color, var(--neon-cyan));
@@ -159,11 +166,13 @@ body {
 .menu-title {
     color: var(--neon-cyan); font-size: 14px; font-weight: bold;
     letter-spacing: 2px;
+    font-family: monospace;
 }
 .menu-close-btn {
     background: none; border: none; color: var(--neon-cyan);
     font-size: 18px; cursor: pointer; padding: 4px 8px;
     transition: color 0.2s, text-shadow 0.2s;
+    font-family: monospace;
 }
 .menu-close-btn:hover {
     color: #fff; text-shadow: 0 0 10px var(--neon-cyan);
@@ -179,6 +188,7 @@ body {
     color: #ccc; font-size: 13px;
     text-align: left; cursor: pointer;
     transition: background 0.2s, color 0.2s;
+    font-family: monospace;
 }
 .menu-item:hover {
     background: rgba(0, 243, 255, 0.1);
@@ -203,6 +213,7 @@ body {
     background: rgba(0, 255, 100, 0.2);
     color: var(--neon-green);
     border: 1px solid var(--neon-green);
+    font-family: monospace;
 }
 .menu-toggle.off .menu-toggle-state,
 .menu-toggle-state.off-state {
@@ -384,6 +395,7 @@ body {
     border-radius: 4px;
     transition: all 0.2s;
     display: flex; align-items: center; justify-content: center;
+    font-family: monospace;
 }
 .menu-audio-btn:hover {
     background: var(--neon-magenta);
@@ -424,6 +436,7 @@ body {
     border: 1px solid var(--btn-default-color, var(--neon-cyan));
     font-size: 12px; padding: 2.5px 8px; border-radius: 2px;
     touch-action: manipulation;
+    font-family: monospace;
 }
 
 /* Mode selection strip */
@@ -440,6 +453,7 @@ body {
     text-transform: uppercase; letter-spacing: 0.5px;
     cursor: pointer; transition: all 0.15s;
     touch-action: manipulation;
+    font-family: monospace;
 }
 .mode-btn:hover { border-color: #666; color: #aaa; }
 .mode-btn.active {
@@ -659,7 +673,7 @@ body {
 .count-neon {
     width: var(--cell-size); height: var(--cell-size);
     display: flex; align-items: center; justify-content: center;
-    font-size: 1.1rem; font-weight: 900;
+    font-size: 1.5rem; font-weight: 900;
     font-family: var(--font-display, 'Courier New', monospace);
     color: var(--label-default, #444); position: relative;
 }

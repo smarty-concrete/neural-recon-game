@@ -1,4 +1,4 @@
-﻿// GLOBAL FIX: Prevent double-tap zoom via JS for environments that don't respect CSS 'manipulation'
+// GLOBAL FIX: Prevent double-tap zoom via JS for environments that don't respect CSS 'manipulation'
 document.addEventListener('dblclick', function(e) {
     e.preventDefault();
 }, { passive: false });
@@ -438,12 +438,88 @@ let isWon = false;
 let showKey = false;
 let undoState = null; // Single undo state: {layers, currentIdx, forkAnchors}
 
+// ============================================
+// RESPONSIVE LAYOUT (board sizing)
+// ============================================
+// Goal: Board uses as much width as possible while never exceeding 90% of the
+// available height under the top bars (header + mode strip).
+//
+// The board footprint includes row/col labels + a right spacer:
+// - Width  ~= (SIZE + 2) * cell + (SIZE - 1) * gap + 2*border
+// - Height ~= (SIZE + 1) * cell + (SIZE - 1) * gap + 2*border
+const BOARD_GAP_PX = 1;      // .cyber-grid gap and label container gap
+const BOARD_BORDER_PX = 2;   // .cyber-grid border width
+let _layoutRaf = null;
+
+function _cssVarPx(varName) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function scheduleLayoutUpdate() {
+    if (_layoutRaf !== null) return;
+    _layoutRaf = requestAnimationFrame(() => {
+        _layoutRaf = null;
+        updateResponsiveBoardSizing();
+    });
+}
+
+function updateResponsiveBoardSizing() {
+    const wrapper = document.querySelector('.grid-wrapper');
+    if (!wrapper) return;
+
+    // Keep CSS grid-size in sync for any CSS that references it.
+    document.documentElement.style.setProperty('--grid-size', String(SIZE));
+
+    const safeLeft = _cssVarPx('--safe-area-left');
+    const safeRight = _cssVarPx('--safe-area-right');
+    const safeBottom = _cssVarPx('--safe-area-bottom');
+
+    const viewportW = document.documentElement.clientWidth;
+    const viewportH = window.innerHeight;
+
+    const wrapperStyle = getComputedStyle(wrapper);
+    const padX = (parseFloat(wrapperStyle.paddingLeft) || 0) + (parseFloat(wrapperStyle.paddingRight) || 0);
+    const padY = (parseFloat(wrapperStyle.paddingTop) || 0) + (parseFloat(wrapperStyle.paddingBottom) || 0);
+
+    const widthOverdraw = 1.05;
+    const availableW = Math.max(0, (viewportW - safeLeft - safeRight) * widthOverdraw);
+    // Use the wrapper's actual top position to account for safe areas, sticky
+    // headers, and any dynamic bar heights.
+    const wrapperTop = wrapper.getBoundingClientRect().top;
+    const availableHBelowBars = Math.max(0, viewportH - wrapperTop - safeBottom);
+    const maxWrapperTotalH = availableHBelowBars * 0.9;
+
+    // Constrain the wrapper's *total* size (including padding/margins) to what fits.
+    const maxWrapperContentW = Math.max(0, availableW - padX);
+    const maxWrapperContentH = Math.max(0, maxWrapperTotalH - padY);
+
+    // Board content size equations.
+    const gapSpan = (SIZE - 1) * BOARD_GAP_PX;
+    const borderSpan = 2 * BOARD_BORDER_PX;
+
+    const maxCellByW = (maxWrapperContentW - gapSpan - borderSpan) / (SIZE + 2);
+    const maxCellByH = (maxWrapperContentH - gapSpan - borderSpan) / (SIZE + 1);
+
+    // Keep a sensible floor to avoid unusably tiny boards.
+    const cell = Math.floor(Math.max(12, Math.min(maxCellByW, maxCellByH)));
+    if (!Number.isFinite(cell) || cell <= 0) return;
+
+    document.documentElement.style.setProperty('--cell-size', `${cell}px`);
+}
+
 // Tutorial mode state
 let isTutorialMode = false;
 let isUserInitiatedTutorial = false; // True if user started tutorial on current puzzle
+let isTutorialHintsOnly = false; // If true, show hints but don't hide/lock tools or force tool selection
 let tutorialHint = null; // Current hint being shown in tutorial
 let hasCompletedTutorial = false; // Track if user has completed the tutorial
+let lastTutorialTool = null; // Track the last required tool in tutorial mode
+let wallSwitchCount = 0; // Count how many times we've switched to walls
+let pathSwitchCount = 0; // Count how many times we've switched to paths
 let hasSeenDataVaultIntro = false; // Track if user has seen data vault intro
+let hasSeenAutoToolExplanation = false; // Track if user has seen Auto tool explanation
 
 // Seeded random number generator (Mulberry32)
 let currentSeed = null;
@@ -923,9 +999,8 @@ function init(resetStreak = true, specificSeed = null) {
 
     SIZE = parseInt(document.getElementById('gridSizeSelect').value);
 
-    let scaleFactor = (SIZE <= 4) ? 1.8 : (SIZE <= 6 ? 1.4 : 1.0);
-    document.documentElement.style.setProperty('--grid-size', SIZE);
-    document.documentElement.style.setProperty('--cell-size', `min(${10 * scaleFactor}vw, ${10 * scaleFactor}vh, 75px)`);
+    // Update responsive sizing before rendering the new grid.
+    scheduleLayoutUpdate();
 
     // Set up seed for this game
     const seed = specificSeed || generateSeed();
@@ -992,9 +1067,9 @@ function restoreGameState(state) {
 
     // Update UI to match restored size
     document.getElementById('gridSizeSelect').value = SIZE;
-    let scaleFactor = (SIZE <= 4) ? 1.8 : (SIZE <= 6 ? 1.4 : 1.0);
-    document.documentElement.style.setProperty('--grid-size', SIZE);
-    document.documentElement.style.setProperty('--cell-size', `min(${10 * scaleFactor}vw, ${10 * scaleFactor}vh, 75px)`);
+
+    // Ensure sizing reflects restored size.
+    scheduleLayoutUpdate();
 
     // Update seed display
     updateSeedDisplay();
@@ -1926,7 +2001,7 @@ function handleCellAction(idx) {
 
     // Tutorial mode: in hint mode, allow completing hint cells
     // In other modes, only allow moves that match the current hint
-    if (isTutorialMode && drawingMode !== 'hint') {
+    if (isTutorialMode && !isTutorialHintsOnly && drawingMode !== 'hint') {
         // Determine what value would be placed
         let intendedValue = 0;
         if (drawingMode === 'wall') {
@@ -3345,7 +3420,22 @@ document.getElementById('newMazeBtn').onclick = () => {
         ChipSound.error();
         return;
     }
-    confirmReset(() => init(true));
+    confirmReset(() => {
+        // Starting a new puzzle should terminate any active tutorial (including hints-only).
+        if (isTutorialMode) {
+            // Close any tutorial dialogs that might be open, then clear tutorial state/UI locks.
+            const tutorialDialogs = [
+                document.getElementById('tutorialIntroDialog'),
+                document.getElementById('tutorialCompleteDialog'),
+                document.getElementById('userTutorialCompleteDialog'),
+            ];
+            tutorialDialogs.forEach(d => {
+                if (d && d.open) d.close();
+            });
+            endTutorial();
+        }
+        init(true);
+    });
 };
 document.getElementById('nextLevelBtn').onclick = () => init(false);
 document.getElementById('decryptToggleBtn').onclick = () => {
@@ -5778,6 +5868,29 @@ function applyHintHighlight(hint) {
 // Toast auto-hide timeout
 let hintToastTimeout = null;
 
+function positionHintToast() {
+    const toast = document.getElementById('hintToast');
+    const grid = document.getElementById('mainGrid');
+    if (!toast || !grid) return;
+
+    const safe = 8; // Minimum distance from viewport edges
+    const gapBelowGrid = 12; // Preferred distance below grid
+
+    // Measure current sizes
+    const gridRect = grid.getBoundingClientRect();
+    const toastRect = toast.getBoundingClientRect();
+
+    // Prefer to sit just below the grid, but clamp so the toast never touches the bottom edge.
+    const preferredTop = gridRect.bottom + gapBelowGrid;
+    const maxTop = window.innerHeight - safe - toastRect.height;
+    const minTop = safe;
+
+    let top = Math.min(preferredTop, maxTop);
+    top = Math.max(top, minTop);
+
+    toast.style.top = `${Math.round(top)}px`;
+}
+
 // Display hint as bottom toast (Android-style)
 function showHint(hint) {
     currentHint = hint;
@@ -5789,6 +5902,7 @@ function showHint(hint) {
     // Show toast and apply highlight immediately
     toast.classList.remove('fading');
     toast.classList.add('visible');
+    positionHintToast();
 
     clearHintHighlights();
     applyHintHighlight(hint);
@@ -5822,8 +5936,19 @@ function hideHintToast() {
 
 // Click on toast to dismiss
 document.getElementById('hintToast').onclick = () => {
+    // Don't allow dismissing hints during tutorial mode
+    if (isTutorialMode) {
+        return;
+    }
     hideHintToast();
 };
+
+window.addEventListener('resize', () => {
+    const toast = document.getElementById('hintToast');
+    if (toast && toast.classList.contains('visible')) {
+        positionHintToast();
+    }
+});
 
 // Apply hint cells to the board (used when Apply Hints setting is enabled)
 function applyHintCells(hint) {
@@ -5920,14 +6045,27 @@ document.getElementById('briefingBtn').onclick = () => {
     document.getElementById('menuOverlay').classList.remove('visible');
     showBriefingDialog();
 };
-document.getElementById('closeBriefingBtn').onclick = () => {
+// Close briefing dialog
+function closeBriefingDialog() {
     ChipSound.click();
     const checkbox = document.getElementById('dontShowBriefingCheckbox');
     if (checkbox) {
         setBriefingCookie(checkbox.checked);
     }
     document.getElementById('briefingOverlay').style.display = 'none';
-};
+}
+
+document.getElementById('closeBriefingBtn').onclick = closeBriefingDialog;
+
+// Close briefing dialog on Escape key
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+        const briefingOverlay = document.getElementById('briefingOverlay');
+        if (briefingOverlay && briefingOverlay.style.display === 'flex') {
+            closeBriefingDialog();
+        }
+    }
+});
 
 // Slide-in menu
 document.getElementById('menuBtn').onclick = () => {
@@ -6363,10 +6501,20 @@ document.getElementById('resetAllConfirmBtn').onclick = () => {
     PlayerStats.clear();
     GameState.clear();
     clearTutorialCompleted();
+    clearDataVaultIntroSeen();
+    
+    // Clear Auto tool explanation flag
+    try {
+        localStorage.removeItem('hasSeenAutoToolExplanation');
+    } catch (e) {
+        // Ignore storage errors
+    }
 
     // Reset runtime state
     winStreak = 0;
     hasCompletedTutorial = false;
+    hasSeenAutoToolExplanation = false;
+    hasSeenDataVaultIntro = false;
 
     // Update UI
     updateGridSizeSelect();
@@ -6414,10 +6562,64 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
             ChipSound.error();
             return;
         }
+        // Block Auto and Erase tools in tutorial mode
+        if (isTutorialMode && !isTutorialHintsOnly && (btn.dataset.mode === 'smart' || btn.dataset.mode === 'erase')) {
+            ChipSound.error();
+            return;
+        }
+        
+        // In tutorial mode, block wrong tool selection
+        if (isTutorialMode && !isTutorialHintsOnly && tutorialHint && tutorialHint.shouldBe) {
+            const requiredTool = tutorialHint.shouldBe === 'wall' ? 'wall' : 'path';
+            if (btn.dataset.mode !== requiredTool) {
+                ChipSound.error();
+                return; // Block the tool switch
+            }
+        }
+        
+        // Check if Auto tool is already selected
+        const wasAutoToolSelected = drawingMode === 'smart' && btn.dataset.mode === 'smart';
+        
         ChipSound.click();
         document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         drawingMode = btn.dataset.mode;
+
+        // Show Auto tool explanation on first use or when tapping already-selected Auto tool (not during tutorial)
+        if (drawingMode === 'smart' && !isTutorialMode) {
+            if (!hasSeenAutoToolExplanation) {
+                showAutoToolExplanation();
+            } else if (wasAutoToolSelected) {
+                // User tapped Auto tool while it's already selected - show explanation
+                const dialog = document.getElementById('autoToolDialog');
+                if (dialog) {
+                    dialog.showModal();
+                    // Scroll to top
+                    dialog.scrollTop = 0;
+                }
+            }
+        }
+
+        // In tutorial mode, check if correct tool is now selected and show hint if needed
+        if (isTutorialMode) {
+            if (tutorialHint) {
+                // We have a pending hint - check if correct tool is now selected
+                if (checkTutorialToolSelection(tutorialHint)) {
+                    // Correct tool selected, show the stored hint
+                    const toast = document.getElementById('hintToast');
+                    const message = document.getElementById('hintMessage');
+                    message.textContent = tutorialHint.message;
+                    toast.classList.remove('fading');
+                    toast.classList.add('visible', 'tutorial-mode');
+                    positionHintToast();
+                    clearHintHighlights();
+                    applyTutorialHighlight(tutorialHint);
+                }
+            } else {
+                // No pending hint, try to get and show next hint
+                showTutorialHint();
+            }
+        }
     };
 });
 
@@ -6469,7 +6671,7 @@ function updateBriefingTerminology(theme) {
     document.querySelectorAll('.theme-wall').forEach(el => el.textContent = t.wall || 'Wall');
     document.querySelectorAll('.theme-path').forEach(el => el.textContent = t.path || 'Path');
     document.querySelectorAll('.theme-deadend').forEach(el => el.textContent = t.deadEnd || 'Dead End');
-    document.querySelectorAll('.theme-stockpile').forEach(el => el.textContent = t.stockpile || 'Stockpile');
+    document.querySelectorAll('.theme-stockpile').forEach(el => el.textContent = t.stockpile || 'Data Cache');
     document.querySelectorAll('.theme-vault').forEach(el => el.textContent = t.vault || 'Vault');
     document.querySelectorAll('.theme-fork').forEach(el => el.textContent = t.fork || 'Fork');
     document.querySelectorAll('.theme-commit').forEach(el => el.textContent = t.commit || 'Commit');
@@ -6495,6 +6697,39 @@ function saveDataVaultIntroSeen() {
         localStorage.setItem('hasSeenDataVaultIntro', 'true');
     } catch (e) {
         // Ignore storage errors
+    }
+}
+
+// Load Auto tool explanation seen flag from localStorage
+function loadAutoToolExplanationSeen() {
+    try {
+        return localStorage.getItem('hasSeenAutoToolExplanation') === 'true';
+    } catch (e) {
+        return false;
+    }
+}
+
+// Save Auto tool explanation seen flag to localStorage
+function saveAutoToolExplanationSeen() {
+    try {
+        localStorage.setItem('hasSeenAutoToolExplanation', 'true');
+    } catch (e) {
+        // Ignore storage errors
+    }
+}
+
+// Show Auto tool explanation dialog
+function showAutoToolExplanation() {
+    if (hasSeenAutoToolExplanation) return;
+    
+    hasSeenAutoToolExplanation = true;
+    saveAutoToolExplanationSeen();
+    
+    const dialog = document.getElementById('autoToolDialog');
+    if (dialog) {
+        dialog.showModal();
+        // Scroll to top
+        dialog.scrollTop = 0;
     }
 }
 
@@ -6525,23 +6760,50 @@ function clearTutorialCompleted() {
     }
 }
 
+// Clear data vault intro seen flag from localStorage
+function clearDataVaultIntroSeen() {
+    try {
+        localStorage.removeItem('hasSeenDataVaultIntro');
+    } catch (e) {
+        // Ignore storage errors
+    }
+}
+
 // Start tutorial mode
-function startTutorial(useCurrentPuzzle = false) {
+function startTutorial(useCurrentPuzzle = false, options = {}) {
     // Exit any existing tutorial mode
     endTutorial();
 
     isTutorialMode = true;
     isUserInitiatedTutorial = useCurrentPuzzle;
+    isTutorialHintsOnly = !!options.hintsOnly;
     tutorialHint = null;
+    lastTutorialTool = null; // Reset tool tracking
+    wallSwitchCount = 0; // Reset switch counters
+    pathSwitchCount = 0; // Reset switch counters
 
     // Close menu if open
     closeMenu();
 
-    // Switch to Auto tool
-    drawingMode = 'smart';
-    document.querySelectorAll('.mode-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.mode === 'smart');
-    });
+    if (!isTutorialHintsOnly) {
+        // Hide Auto and Erase tools during tutorial
+        const autoBtn = document.querySelector('.mode-btn[data-mode="smart"]');
+        const eraseBtn = document.querySelector('.mode-btn[data-mode="erase"]');
+        if (autoBtn) autoBtn.style.display = 'none';
+        if (eraseBtn) eraseBtn.style.display = 'none';
+
+        // Hide the entire top row (header strip) during tutorial
+        const headerStrip = document.querySelector('.header-strip');
+        if (headerStrip) {
+            headerStrip.style.display = 'none';
+        }
+
+        // Switch to Path tool (will be guided to correct tool before first hint)
+        drawingMode = 'path';
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === 'path');
+        });
+    }
 
     if (!useCurrentPuzzle) {
         // Set to 4x4 and generate tutorial puzzle with specific seed
@@ -6558,10 +6820,17 @@ function startTutorial(useCurrentPuzzle = false) {
         render();
     }
 
-    // Show intro dialog
-    const dialog = document.getElementById('tutorialIntroDialog');
-    if (dialog) {
-        dialog.showModal();
+    if (!isTutorialHintsOnly) {
+        // Show intro dialog
+        const dialog = document.getElementById('tutorialIntroDialog');
+        if (dialog) {
+            dialog.showModal();
+        }
+    } else {
+        // Hints-only: show hints immediately (no intro dialog, no tool gating)
+        setTimeout(() => {
+            if (isTutorialMode && !isWon) showTutorialHint();
+        }, 400); // Wait for any pending hideHintToast() cleanup to finish
     }
 }
 
@@ -6569,6 +6838,22 @@ function startTutorial(useCurrentPuzzle = false) {
 function endTutorial() {
     isTutorialMode = false;
     tutorialHint = null;
+    lastTutorialTool = null; // Reset tool tracking
+    wallSwitchCount = 0; // Reset switch counters
+    pathSwitchCount = 0; // Reset switch counters
+    isTutorialHintsOnly = false;
+
+    // Show Auto and Erase tools again
+    const autoBtn = document.querySelector('.mode-btn[data-mode="smart"]');
+    const eraseBtn = document.querySelector('.mode-btn[data-mode="erase"]');
+    if (autoBtn) autoBtn.style.display = '';
+    if (eraseBtn) eraseBtn.style.display = '';
+
+    // Show the header strip again
+    const headerStrip = document.querySelector('.header-strip');
+    if (headerStrip) {
+        headerStrip.style.display = '';
+    }
 
     // Clear tutorial-specific UI
     const toast = document.getElementById('hintToast');
@@ -6577,6 +6862,94 @@ function endTutorial() {
     }
     clearHintHighlights();
     hideHintToast();
+}
+
+// Check if correct tool is selected for tutorial hint
+function checkTutorialToolSelection(hint) {
+    if (isTutorialHintsOnly) return true;
+    if (!hint || !hint.shouldBe) return true; // No tool requirement, allow any
+
+    const requiredTool = hint.shouldBe === 'wall' ? 'wall' : 'path';
+    return drawingMode === requiredTool;
+}
+
+// Guide user to select correct tool in tutorial
+function guideTutorialToolSelection(hint) {
+    if (isTutorialHintsOnly) return;
+    if (!hint || !hint.shouldBe) return;
+
+    const requiredTool = hint.shouldBe === 'wall' ? 'wall' : 'path';
+    const toolName = requiredTool === 'wall' ? 'Wall' : 'Path';
+
+    // Highlight the required tool
+    clearTutorialToolHighlight();
+    const toolBtn = document.querySelector(`.mode-btn[data-mode="${requiredTool}"]`);
+    if (toolBtn) {
+        toolBtn.classList.add('tutorial-tool-highlight');
+    }
+
+    // Show guidance message
+    const toast = document.getElementById('hintToast');
+    const message = document.getElementById('hintMessage');
+    message.textContent = `Select the ${toolName} tool.`;
+
+    toast.classList.remove('fading');
+    toast.classList.add('visible', 'tutorial-mode');
+    positionHintToast();
+
+    // Clear any existing timeouts
+    if (hintToastTimeout) {
+        clearTimeout(hintToastTimeout);
+        hintToastTimeout = null;
+    }
+}
+
+// Show transition message when tool changes in tutorial
+function showTutorialToolTransition(requiredTool) {
+    if (isTutorialHintsOnly) return;
+    let messageText = '';
+    
+    if (requiredTool === 'wall') {
+        wallSwitchCount++;
+        if (wallSwitchCount === 1) {
+            messageText = "Now we'll start putting in some walls.";
+        } else if (wallSwitchCount === 2) {
+            messageText = "Time to add more walls.";
+        } else {
+            messageText = "Let's continue with walls.";
+        }
+    } else if (requiredTool === 'path') {
+        pathSwitchCount++;
+        if (pathSwitchCount === 1) {
+            messageText = "Looks like we have some more paths to put in now.";
+        } else {
+            messageText = "Let's continue with paths.";
+        }
+    }
+
+    const toast = document.getElementById('hintToast');
+    const message = document.getElementById('hintMessage');
+    message.textContent = messageText;
+
+    toast.classList.remove('fading');
+    toast.classList.add('visible', 'tutorial-mode');
+    positionHintToast();
+
+    // Clear any existing timeouts
+    if (hintToastTimeout) {
+        clearTimeout(hintToastTimeout);
+        hintToastTimeout = null;
+    }
+
+    // Highlight the required tool (user must manually select it)
+    clearTutorialToolHighlight();
+    const toolBtn = document.querySelector(`.mode-btn[data-mode="${requiredTool}"]`);
+    if (toolBtn) {
+        toolBtn.classList.add('tutorial-tool-highlight');
+    }
+
+    // Don't automatically switch - user must select the tool themselves
+    // The tool selection handler will detect when correct tool is selected and show the hint
 }
 
 // Show the next tutorial hint
@@ -6589,6 +6962,53 @@ function showTutorialHint() {
         return;
     }
 
+    // Hints-only tutorial: always show hint immediately (no tool gating or tool-change transitions)
+    if (isTutorialHintsOnly) {
+        tutorialHint = hint;
+
+        const toast = document.getElementById('hintToast');
+        const message = document.getElementById('hintMessage');
+        message.textContent = hint.message;
+
+        toast.classList.remove('fading');
+        toast.classList.add('visible', 'tutorial-mode');
+        positionHintToast();
+
+        // Clear any existing timeouts - tutorial hints don't auto-hide
+        if (hintToastTimeout) {
+            clearTimeout(hintToastTimeout);
+            hintToastTimeout = null;
+        }
+
+        clearHintHighlights();
+        applyTutorialHighlight(hint);
+        return;
+    }
+
+    // Determine required tool
+    const requiredTool = hint.shouldBe ? (hint.shouldBe === 'wall' ? 'wall' : 'path') : null;
+
+    // Check if tool has changed
+    if (requiredTool && lastTutorialTool !== null && lastTutorialTool !== requiredTool) {
+        // Tool changed - show transition message first
+        tutorialHint = hint;
+        lastTutorialTool = requiredTool;
+        showTutorialToolTransition(requiredTool);
+        return;
+    }
+
+    // Update last tool
+    if (requiredTool) {
+        lastTutorialTool = requiredTool;
+    }
+
+    // Check if correct tool is selected before showing hint
+    if (!checkTutorialToolSelection(hint)) {
+        tutorialHint = hint; // Store hint so we can show it when correct tool is selected
+        guideTutorialToolSelection(hint);
+        return; // Don't show hint until correct tool is selected
+    }
+
     tutorialHint = hint;
 
     // Show hint in persistent mode
@@ -6599,6 +7019,7 @@ function showTutorialHint() {
 
     toast.classList.remove('fading');
     toast.classList.add('visible', 'tutorial-mode');
+    positionHintToast();
 
     // Clear any existing timeouts - tutorial hints don't auto-hide
     if (hintToastTimeout) {
@@ -6770,6 +7191,13 @@ function showDataVaultIntro() {
 }
 
 window.onload = () => {
+    // Keep the board sized correctly on viewport changes (rotation, URL bar collapse, etc.)
+    window.addEventListener('resize', scheduleLayoutUpdate, { passive: true });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', scheduleLayoutUpdate, { passive: true });
+        window.visualViewport.addEventListener('scroll', scheduleLayoutUpdate, { passive: true });
+    }
+
     // Initialize theme system if available
     if (typeof ThemeManager !== 'undefined') {
         ThemeManager.loadSaved('cyberpunk');
@@ -6858,6 +7286,9 @@ window.onload = () => {
         }
     }
 
+    // One more pass after initial layout settles.
+    scheduleLayoutUpdate();
+
     // Save game state when page is about to unload (only if tutorial completed)
     window.addEventListener('beforeunload', () => {
         if (hasCompletedTutorial && !isTutorialMode) {
@@ -6922,6 +7353,9 @@ window.onload = () => {
 
     // Load data vault intro seen flag
     hasSeenDataVaultIntro = loadDataVaultIntroSeen();
+    
+    // Load Auto tool explanation seen flag
+    hasSeenAutoToolExplanation = loadAutoToolExplanationSeen();
 
     // Tutorial dialog handlers
     const tutorialIntroDialog = document.getElementById('tutorialIntroDialog');
@@ -6932,28 +7366,88 @@ window.onload = () => {
     document.getElementById('tutorialIntroStartBtn').onclick = () => {
         ChipSound.click();
         tutorialIntroDialog.close();
-        // Start showing hints after a brief delay
+        // Get the first hint to determine required tool, then guide user
         setTimeout(() => {
+            const hint = getHint();
+            if (hint && hint.shouldBe) {
+                const requiredTool = hint.shouldBe === 'wall' ? 'wall' : 'path';
+                lastTutorialTool = requiredTool; // Set initial tool tracking
+                
+                // Check if correct tool is already selected
+                if (checkTutorialToolSelection(hint)) {
+                    // Tool is already correct, show hint directly
+                    tutorialHint = hint;
+                    const toast = document.getElementById('hintToast');
+                    const message = document.getElementById('hintMessage');
+                    message.textContent = hint.message;
+                    toast.classList.remove('fading');
+                    toast.classList.add('visible', 'tutorial-mode');
+                    positionHintToast();
+                    clearHintHighlights();
+                    applyTutorialHighlight(hint);
+                } else {
+                    // Guide user to select correct tool before showing hint
+                    guideTutorialToolSelection(hint);
+                    // Store hint so we can show it when correct tool is selected
+                    tutorialHint = hint;
+                }
+            } else {
+                // No tool requirement, show hint directly
             showTutorialHint();
+            }
         }, 500);
     };
 
-    // Tutorial complete - continue button
-    document.getElementById('tutorialCompleteBtn').onclick = () => {
-        ChipSound.click();
-        tutorialCompleteDialog.close();
+    // Tutorial intro - Escape key starts tutorial instead of closing
+    if (tutorialIntroDialog) {
+        tutorialIntroDialog.addEventListener('cancel', (e) => {
+            e.preventDefault(); // Prevent default close behavior
+            tutorialIntroStartBtn.click(); // Trigger start button instead
+        });
+    }
+
+    // Tutorial complete - advance to main game
+    function advanceFromTutorialComplete() {
         // Start a new level after tutorial
         init(false); // Keep streak, start new puzzle at current size
+    }
+
+    // Tutorial complete - continue button
+    const tutorialCompleteBtn = document.getElementById('tutorialCompleteBtn');
+    tutorialCompleteBtn.onclick = () => {
+        ChipSound.click();
+        tutorialCompleteDialog.close();
+        advanceFromTutorialComplete();
     };
+
+    // Tutorial complete - advance on any dismissal (Escape, backdrop click, etc.)
+    if (tutorialCompleteDialog) {
+        // Handle Escape key
+        tutorialCompleteDialog.addEventListener('cancel', (e) => {
+            e.preventDefault(); // Prevent default close behavior
+            tutorialCompleteDialog.close();
+            advanceFromTutorialComplete();
+        });
+    }
 
     // User tutorial complete - continue button
     const userTutorialCompleteDialog = document.getElementById('userTutorialCompleteDialog');
-    document.getElementById('userTutorialCompleteBtn').onclick = () => {
+    const userTutorialCompleteBtn = document.getElementById('userTutorialCompleteBtn');
+    userTutorialCompleteBtn.onclick = () => {
         ChipSound.click();
         userTutorialCompleteDialog.close();
-        // Start a new level after tutorial
-        init(false); // Keep streak, start new puzzle at current size
+        advanceFromTutorialComplete();
     };
+
+    // User tutorial complete - advance on any dismissal
+    if (userTutorialCompleteDialog) {
+        // Handle Escape key
+        userTutorialCompleteDialog.addEventListener('cancel', (e) => {
+            e.preventDefault(); // Prevent default close behavior
+            userTutorialCompleteDialog.close();
+            advanceFromTutorialComplete();
+        });
+    }
 
     // Data vault intro - skip button
     document.getElementById('dataVaultSkipBtn').onclick = () => {
@@ -6965,7 +7459,8 @@ window.onload = () => {
     document.getElementById('dataVaultTutorialBtn').onclick = () => {
         ChipSound.click();
         dataVaultIntroDialog.close();
-        startTutorial(true); // Use current puzzle
+        // Data Vault guided training should be hints-only: no tool hiding/locking, no forced tool switching, no training intro dialog
+        startTutorial(true, { hintsOnly: true }); // Use current puzzle
     };
 
     // Menu tutorial buttons
@@ -6977,6 +7472,13 @@ window.onload = () => {
     document.getElementById('tutorialCurrentBtn').onclick = () => {
         ChipSound.click();
         startTutorial(true); // Current puzzle
+    };
+
+    // Auto tool explanation dialog
+    const autoToolDialog = document.getElementById('autoToolDialog');
+    document.getElementById('autoToolGotItBtn').onclick = () => {
+        ChipSound.click();
+        autoToolDialog.close();
     };
 
     // Level unlocked dialog buttons
@@ -7008,13 +7510,19 @@ window.onload = () => {
     };
 
     // Close dialogs on backdrop click
-    [tutorialIntroDialog, tutorialCompleteDialog, dataVaultIntroDialog, levelUnlockedDialog].forEach(dialog => {
+    [tutorialIntroDialog, tutorialCompleteDialog, dataVaultIntroDialog, levelUnlockedDialog, userTutorialCompleteDialog].forEach(dialog => {
         if (dialog) {
             dialog.addEventListener('click', (e) => {
                 if (e.target === dialog) {
                     // Don't close tutorial intro or level unlocked by clicking backdrop
-                    if (dialog !== tutorialIntroDialog && dialog !== levelUnlockedDialog) {
+                    // Tutorial complete dialogs handle their own dismissal with advance logic
+                    if (dialog !== tutorialIntroDialog && dialog !== levelUnlockedDialog && 
+                        dialog !== tutorialCompleteDialog && dialog !== userTutorialCompleteDialog) {
                         dialog.close();
+                    } else if (dialog === tutorialCompleteDialog || dialog === userTutorialCompleteDialog) {
+                        // Backdrop click on tutorial complete - close and advance
+                        dialog.close();
+                        advanceFromTutorialComplete();
                     }
                 }
             });

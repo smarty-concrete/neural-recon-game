@@ -438,7 +438,7 @@
                 <button id="tutorialBtn" class="menu-item">
                     <span class="menu-item-label">Play Tutorial</span>
                 </button>
-                <button id="tutorialCurrentBtn" class="menu-item">
+                <button id="tutorialCurrentBtn" class="menu-item" style="display: none;">
                     <span class="menu-item-label">Tutorial: Current Puzzle</span>
                 </button>
                 <div class="menu-divider"></div>
@@ -471,6 +471,10 @@
                                     <span class="menu-item-label">Hints Tool</span>
                                     <span id="hintsEnabledState" class="menu-toggle-state off-state">OFF</span>
                                 </button>
+                                <button id="decryptToggleBtn" class="menu-item menu-toggle nested-item">
+                                    <span class="menu-item-label">Display Solution</span>
+                                    <span id="decryptToggleState" class="menu-toggle-state off-state">OFF</span>
+                                </button>
                             </div>
                         </div>
                         <!-- Auto-fill Sub-section -->
@@ -499,11 +503,6 @@
                                 </button>
                             </div>
                         </div>
-                        <!-- Decrypt Overlay -->
-                        <button id="decryptToggleBtn" class="menu-item menu-toggle nested-item">
-                            <span class="menu-item-label">Decrypt Overlay</span>
-                            <span id="decryptToggleState" class="menu-toggle-state off-state">OFF</span>
-                        </button>
                     </div>
                 </div>
             </div>
@@ -599,9 +598,11 @@
     </div>
 
     <!-- Hint Toast (Android-style bottom toast) -->
-    <div id="hintToast" class="hint-toast">
-        <div class="hint-toast-content">
-            <span id="hintMessage" class="hint-toast-message"></span>
+    <div class="below-board-area">
+        <div id="hintToast" class="hint-toast">
+            <div class="hint-toast-content">
+                <span id="hintMessage" class="hint-toast-message"></span>
+            </div>
         </div>
     </div>
 
@@ -699,10 +700,10 @@
             <div class="tutorial-dialog-body">
                 <p>Welcome, Operator. This guided training will teach you to decode neural pathways.</p>
                 <div class="tutorial-rules">
-                    <p><span class="tutorial-highlight">OBJECTIVE:</span> Find the hidden path by placing walls.</p>
+                    <p><span class="tutorial-highlight">OBJECTIVE:</span> Find the hidden path by placing walls<span class="cell-icon cell-icon-wall"></span>.</p>
                     <p><span class="tutorial-highlight">RULE 1:</span> Numbers show how many walls belong in each row/column.</p>
                     <p><span class="tutorial-highlight">RULE 2:</span> All path cells must connect to form one continuous network.</p>
-                    <p><span class="tutorial-highlight">RULE 3:</span> No dead ends except at marked nodes.</p>
+                    <p><span class="tutorial-highlight">RULE 3:</span> No dead ends except at <span class="cell-icon cell-icon-deadend"></span> nodes.</p>
                     <p><span class="tutorial-highlight">RULE 4:</span> No 2×2 blocks of path cells allowed.</p>
                 </div>
                 <p class="tutorial-instruction">Follow the hints to complete the puzzle.</p>
@@ -763,19 +764,208 @@
         <div class="tutorial-dialog-content">
             <div class="tutorial-dialog-title">NEW ELEMENT DETECTED</div>
             <div class="tutorial-dialog-body">
-                <p>This grid contains a <span class="tutorial-highlight">Data Vault</span> — a secure 3×3 zone surrounding a stockpile.</p>
+                <p>This grid contains a <span class="tutorial-highlight theme-vault">Data Vault</span> — a secure 3×3 zone surrounding a <span class="theme-stockpile">Data Cache</span>.</p>
                 <div class="tutorial-rules">
-                    <p><span class="tutorial-highlight">VAULT RULES:</span></p>
-                    <p>• The vault is a 3×3 area of path cells</p>
-                    <p>• It must be surrounded by walls on all sides</p>
-                    <p>• Exactly ONE door connects the vault to the main path</p>
-                    <p>• The 2×2 rule does NOT apply inside the vault</p>
+                    <p><span class="tutorial-highlight"><span class="tutorial-highlight theme-vault">Data Vault</span> Rules:</span></p>
+                    <p>• The <span class="theme-vault">Data Vault</span> is a 3×3 area of path cells. A <span class="theme-stockpile">Data Cache</span> is located somewhere inside the vault, but the exact location is not known.</p>
+                    <p>• The <span class="theme-vault">Data Vault</span> must be surrounded by walls on all sides</p>
+                    <p>• Exactly ONE doorway connects the <span class="theme-vault">Data Vault</span> to the main path</p>
+                    <p>• The 2×2 rule does NOT apply inside the <span class="theme-vault">Data Vault</span></p>
                 </div>
                 <p class="tutorial-instruction">Would you like guided training for this puzzle?</p>
             </div>
             <div class="tutorial-dialog-buttons">
                 <button id="dataVaultSkipBtn" class="cyber-btn">Skip Tutorial</button>
                 <button id="dataVaultTutorialBtn" class="cyber-btn btn-action">Start Tutorial</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Auto Tool Explanation Dialog -->
+    <dialog id="autoToolDialog" class="tutorial-dialog">
+        <div class="tutorial-dialog-content">
+            <div class="tutorial-dialog-title">AUTO TOOL</div>
+            <div class="tutorial-dialog-body" id="autoToolDialogBody">
+                <p>The <span class="tutorial-highlight">Auto</span> tool is context-aware and adapts to what you tap on.</p>
+                
+                <div class="auto-tool-sections">
+                    <div class="auto-tool-section">
+                        <p><span class="tutorial-highlight">TAPPING & DRAGGING:</span></p>
+                        <div class="tutorial-rules">
+                            
+                            <div class="auto-tool-example">
+                                <div class="auto-tool-diagram">
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell"></div>
+                                        <div class="tip-cell"></div>                                    </div>
+                                    <div style="margin: 0 8px; font-size: 20px;">→</div>
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell tip-cell-wall"></div>
+                                        <div class="tip-cell tip-cell-wall"></div>
+                                    </div>
+                                </div>
+                                <p>Tap on an empty cell and start dragging to place <span class="theme-walls">walls</span> in other empty cells.</p>
+                            </div>
+
+                            <div class="auto-tool-example">
+                                <div class="auto-tool-diagram">
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell tip-cell-wall"></div>
+                                        <div class="tip-cell tip-cell-wall"></div>
+                                    </div>
+                                    <div style="margin: 0 8px; font-size: 20px;">→</div>
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell tip-cell-path"></div>
+                                        <div class="tip-cell tip-cell-path"></div>
+                                    </div>
+                                </div>
+                                <p>Tap on a wall and start dragging to change <span class="theme-walls">walls</span> into <span class="theme-paths">paths</span>.</p>
+                            </div>
+
+                            <div class="auto-tool-example">
+                                <div class="auto-tool-diagram">
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell tip-cell-path"></div>
+                                        <div class="tip-cell tip-cell-path"></div>
+                                    </div>
+                                    <div style="margin: 0 8px; font-size: 20px;">→</div>
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell"></div>
+                                        <div class="tip-cell"></div>
+                                    </div>
+                                </div>
+                                <p>Tap on a <span class="theme-path">path</span> and start dragging on paths to erase the <span class="theme-path">path</span>.</p>
+                            </div>
+
+
+                            <div class="auto-tool-example">
+                                <div class="auto-tool-diagram">
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell tip-cell-path"></div>
+                                        <div class="tip-cell"></div>
+                                    </div>
+                                    <div style="margin: 0 8px; font-size: 20px;">→</div>
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell tip-cell-path"></div>
+                                        <div class="tip-cell tip-cell-path"></div>
+                                    </div>
+                                </div>
+                                <p>Tap on a <span class="theme-path">path</span> and start dragging on empty cells to place more <span class="theme-paths">paths</span>.</p>
+                            </div>
+
+                            <div class="auto-tool-example">
+                                <div class="auto-tool-diagram">
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell tip-cell-deadend"></div>
+                                        <div class="tip-cell"></div>
+                                    </div>
+                                    <div style="margin: 0 8px; font-size: 20px;">→</div>
+                                    <div class="tip-grid" style="grid-template-columns: repeat(2, 32px); gap: 8px;">
+                                        <div class="tip-cell tip-cell-deadend"></div>
+                                        <div class="tip-cell tip-cell-path"></div>
+                                    </div>
+                                </div>
+                                <p>Tap on a <span class="theme-deadend">dead end</span> and start dragging to place <span class="theme-paths">paths</span>.</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="auto-tool-section">
+                        <p><span class="tutorial-highlight">TAPPING:</span></p>
+                        <div class="tutorial-rules">
+                    <div class="auto-tool-example">
+                        <div class="auto-tool-diagram">
+                            <div style="text-align: center;">
+                                <div style="display: inline-block; padding: 4px 8px; background: linear-gradient(135deg, rgba(0, 255, 159, 0.2), rgba(0, 255, 159, 0.1)); border: 1px solid var(--neon-green); border-radius: 4px; margin-bottom: 4px;">
+                                    <span style="color: var(--neon-green); font-weight: bold;">3</span>
+                                </div>
+                                <div class="tip-grid" style="grid-template-columns: repeat(1, 32px); gap: 2px; margin: 4px auto;">
+                                    <div class="tip-cell tip-cell-wall"></div>
+                                    <div class="tip-cell tip-cell-wall"></div>
+                                    <div class="tip-cell"></div>
+                                    <div class="tip-cell"></div>
+                                    <div class="tip-cell tip-cell-wall"></div>
+                                </div>
+                            </div>
+                            <div style="margin: 0 8px; font-size: 20px;">→</div>
+                            <div style="text-align: center;">
+                                <div style="display: inline-block; padding: 4px 8px; background: linear-gradient(135deg, rgba(0, 255, 159, 0.2), rgba(0, 255, 159, 0.1)); border: 1px solid var(--neon-green); border-radius: 4px; margin-bottom: 4px;">
+                                    <span style="color: var(--neon-green); font-weight: bold;">3</span>
+                                </div>
+                                <div class="tip-grid" style="grid-template-columns: repeat(1, 32px); gap: 2px; margin: 4px auto;">
+                                    <div class="tip-cell tip-cell-wall"></div>
+                                    <div class="tip-cell tip-cell-wall"></div>
+                                    <div class="tip-cell tip-cell-path"></div>
+                                    <div class="tip-cell tip-cell-path"></div>
+                                    <div class="tip-cell tip-cell-wall"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <p>Tap a green row/column header to fill all empty cells with <span class="theme-paths">paths</span>.</p>
+                    </div>
+
+                    <div class="auto-tool-example">
+                        <div class="auto-tool-diagram">
+                            <div class="tip-grid" style="grid-template-columns: repeat(3, 32px); gap: 4px;">
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-path"></div>
+                                <div class="tip-cell tip-cell-deadend"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell"></div>
+                            </div>
+                            <div style="margin: 0 8px; font-size: 20px;">→</div>
+                            <div class="tip-grid" style="grid-template-columns: repeat(3, 32px); gap: 4px;">
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-wall"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-path"></div>
+                                <div class="tip-cell tip-cell-deadend"></div>
+                                <div class="tip-cell tip-cell-wall"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-wall"></div>
+                                <div class="tip-cell"></div>
+                            </div>
+                        </div>
+                        <p>Tap a <span class="theme-deadend">dead end</span> with one <span class="theme-path">path</span> to fill in the surrounding empty cells with <span class="theme-walls">walls</span>.</p>
+                    </div>
+
+                    <div class="auto-tool-example">
+                        <div class="auto-tool-diagram">
+                            <div class="tip-grid" style="grid-template-columns: repeat(3, 32px); gap: 4px;">
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-wall"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-deadend"></div>
+                                <div class="tip-cell tip-cell-wall"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-wall"></div>
+                                <div class="tip-cell"></div>
+                            </div>
+                            <div style="margin: 0 8px; font-size: 20px;">→</div>
+                            <div class="tip-grid" style="grid-template-columns: repeat(3, 32px); gap: 4px;">
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-wall"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-path"></div>
+                                <div class="tip-cell tip-cell-deadend"></div>
+                                <div class="tip-cell tip-cell-wall"></div>
+                                <div class="tip-cell"></div>
+                                <div class="tip-cell tip-cell-wall"></div>
+                                <div class="tip-cell"></div>
+                            </div>
+                        </div>
+                        <p>Tap a <span class="theme-deadend">dead end</span> with three <span class="theme-walls">walls</span> to place the required <span class="theme-path">path</span>.</p>
+                    </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="tutorial-dialog-buttons">
+                <button id="autoToolGotItBtn" class="cyber-btn btn-action">Got It</button>
             </div>
         </div>
     </dialog>

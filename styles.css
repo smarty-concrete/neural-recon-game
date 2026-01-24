@@ -442,6 +442,7 @@ body {
 /* Mode selection strip */
 .mode-strip {
     display: flex; align-items: center; justify-content: center; gap: 8px;
+    flex-wrap: wrap;
     padding: 6px 10px; background: rgba(0, 0, 0, 0.6);
     border-bottom: 1px solid rgba(0, 243, 255, 0.2);
 }
@@ -1046,6 +1047,17 @@ body {
 #forkDialog {
     max-width: 600px !important;
     width: min(calc(100vw - 16px), 600px) !important;
+}
+
+/* Hint dialog sections should always stack vertically */
+#hintDialog .auto-tool-sections {
+    flex-direction: column !important;
+}
+
+/* Hint dialog max width */
+#hintDialog {
+    max-width: 450px !important;
+    width: min(calc(100vw - 16px), 450px) !important;
 }
 
 #autoToolDialog {

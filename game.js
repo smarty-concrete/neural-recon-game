@@ -521,6 +521,7 @@ let pathSwitchCount = 0; // Count how many times we've switched to paths
 let hasSeenDataVaultIntro = false; // Track if user has seen data vault intro
 let hasSeenAutoToolExplanation = false; // Track if user has seen Auto tool explanation
 let hasSeenForkExplanation = false; // Track if user has seen Fork explanation
+let hasSeenHintExplanation = false; // Track if user has seen Hint explanation
 
 // Seeded random number generator (Mulberry32)
 let currentSeed = null;
@@ -6519,12 +6520,20 @@ document.getElementById('resetAllConfirmBtn').onclick = () => {
     } catch (e) {
         // Ignore storage errors
     }
+    
+    // Clear Hint explanation flag
+    try {
+        localStorage.removeItem('hasSeenHintExplanation');
+    } catch (e) {
+        // Ignore storage errors
+    }
 
     // Reset runtime state
     winStreak = 0;
     hasCompletedTutorial = false;
     hasSeenAutoToolExplanation = false;
     hasSeenForkExplanation = false;
+    hasSeenHintExplanation = false;
     hasSeenDataVaultIntro = false;
 
     // Update UI
@@ -6608,6 +6617,13 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
                     // Scroll to top
                     dialog.scrollTop = 0;
                 }
+            }
+        }
+
+        // Show Hint tool explanation on first use (not during tutorial)
+        if (drawingMode === 'hint' && !isTutorialMode) {
+            if (!hasSeenHintExplanation) {
+                showHintExplanation();
             }
         }
 
@@ -6770,6 +6786,39 @@ function showForkExplanation() {
     saveForkExplanationSeen();
     
     const dialog = document.getElementById('forkDialog');
+    if (dialog) {
+        dialog.showModal();
+        // Scroll to top
+        dialog.scrollTop = 0;
+    }
+}
+
+// Load Hint explanation seen flag from localStorage
+function loadHintExplanationSeen() {
+    try {
+        return localStorage.getItem('hasSeenHintExplanation') === 'true';
+    } catch (e) {
+        return false;
+    }
+}
+
+// Save Hint explanation seen flag to localStorage
+function saveHintExplanationSeen() {
+    try {
+        localStorage.setItem('hasSeenHintExplanation', 'true');
+    } catch (e) {
+        // Ignore storage errors
+    }
+}
+
+// Show Hint explanation dialog
+function showHintExplanation() {
+    if (hasSeenHintExplanation) return;
+    
+    hasSeenHintExplanation = true;
+    saveHintExplanationSeen();
+    
+    const dialog = document.getElementById('hintDialog');
     if (dialog) {
         dialog.showModal();
         // Scroll to top
@@ -7403,6 +7452,9 @@ window.onload = () => {
     
     // Load Fork explanation seen flag
     hasSeenForkExplanation = loadForkExplanationSeen();
+    
+    // Load Hint explanation seen flag
+    hasSeenHintExplanation = loadHintExplanationSeen();
 
     // Tutorial dialog handlers
     const tutorialIntroDialog = document.getElementById('tutorialIntroDialog');
@@ -7533,6 +7585,13 @@ window.onload = () => {
     document.getElementById('forkGotItBtn').onclick = () => {
         ChipSound.click();
         forkDialog.close();
+    };
+
+    // Hint explanation dialog
+    const hintDialog = document.getElementById('hintDialog');
+    document.getElementById('hintGotItBtn').onclick = () => {
+        ChipSound.click();
+        hintDialog.close();
     };
 
     // Level unlocked dialog buttons

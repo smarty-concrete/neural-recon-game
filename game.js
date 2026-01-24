@@ -4527,6 +4527,118 @@ function hintVaultExitDeadEnd(merged) {
     return null;
 }
 
+// Hint: When only 4 empty cells remain and puzzle has two valid solutions, suggest one
+function hintTwoValidSolutions(merged, forCell = null) {
+    // Find all empty cells
+    const emptyCells = [];
+    for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+            const idx = r * SIZE + c;
+            if (merged[idx] === 0 && !isFixedPath(r, c)) {
+                emptyCells.push({ r, c });
+            }
+        }
+    }
+
+    // Only apply if exactly 4 empty cells
+    if (emptyCells.length !== 4) return null;
+
+    // If forCell is specified, check if it's one of the 4 empty cells
+    if (forCell) {
+        const isInEmptyCells = emptyCells.some(ec => ec.r === forCell.r && ec.c === forCell.c);
+        if (!isInEmptyCells) return null;
+    }
+
+    // Try all possible pairings: (0,1) & (2,3), (0,2) & (1,3), (0,3) & (1,2)
+    const pairings = [
+        [[0, 1], [2, 3]],
+        [[0, 2], [1, 3]],
+        [[0, 3], [1, 2]]
+    ];
+
+    const validSolutions = [];
+
+    for (const pairing of pairings) {
+        const [pair1, pair2] = pairing;
+        
+        // Try making pair1 walls and pair2 paths
+        const testBoard1 = [...merged];
+        for (const idx of pair1) {
+            testBoard1[emptyCells[idx].r * SIZE + emptyCells[idx].c] = 1; // wall
+        }
+        for (const idx of pair2) {
+            testBoard1[emptyCells[idx].r * SIZE + emptyCells[idx].c] = 2; // path
+        }
+        if (isValidAlternateSolution(testBoard1)) {
+            validSolutions.push({
+                walls: pair1.map(idx => emptyCells[idx]),
+                paths: pair2.map(idx => emptyCells[idx])
+            });
+        }
+
+        // Try making pair1 paths and pair2 walls
+        const testBoard2 = [...merged];
+        for (const idx of pair1) {
+            testBoard2[emptyCells[idx].r * SIZE + emptyCells[idx].c] = 2; // path
+        }
+        for (const idx of pair2) {
+            testBoard2[emptyCells[idx].r * SIZE + emptyCells[idx].c] = 1; // wall
+        }
+        if (isValidAlternateSolution(testBoard2)) {
+            validSolutions.push({
+                walls: pair2.map(idx => emptyCells[idx]),
+                paths: pair1.map(idx => emptyCells[idx])
+            });
+        }
+    }
+
+    // Only hint if exactly 2 solutions found
+    if (validSolutions.length !== 2) return null;
+
+    // Check which solution matches the canonical solution
+    let matchingSolution = null;
+    for (const sol of validSolutions) {
+        let matches = true;
+        for (const cell of sol.walls) {
+            if (solution[cell.r][cell.c] !== 1) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) {
+            // Also verify the paths match
+            for (const cell of sol.paths) {
+                if (solution[cell.r][cell.c] !== 0) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                matchingSolution = sol;
+                break;
+            }
+        }
+    }
+
+    // If no solution matches exactly, pick the first one (both are valid)
+    const solutionToSuggest = matchingSolution || validSolutions[0];
+    const cellList = formatCellList(solutionToSuggest.walls);
+    const cellWord = solutionToSuggest.walls.length === 1 ? 'Cell' : 'Cells';
+
+    return {
+        message: `Two solutions are valid. Try making ${cellWord} ${cellList} ${solutionToSuggest.walls.length === 1 ? 'a wall' : 'walls'}.`,
+        highlight: solutionToSuggest.walls.length === 1
+            ? { type: 'cell', r: solutionToSuggest.walls[0].r, c: solutionToSuggest.walls[0].c }
+            : { type: 'cells', cells: solutionToSuggest.walls },
+        // Include all 4 empty cells so clicking any of them will show the hint
+        // But only the suggested cells (in highlight) should be validated
+        cells: emptyCells,
+        shouldBe: 'wall',
+        // Mark that validation should only check highlighted cells, not all cells
+        validateOnlyHighlighted: true
+    };
+}
+
 // Hint: If placing a wall/path would complete a row/column and cause an obvious error, cell must be opposite
 // Errors checked: 2x2 path block (outside vault), invalid dead end, dead end with multiple exits, disconnected paths
 function hintRowColCompletionCausesError(merged) {
@@ -5566,7 +5678,14 @@ function validateHint(hint, hintName) {
 
     const expectedValue = hint.shouldBe === 'wall' ? 1 : 0; // solution uses 1=wall, 0=path
 
-    for (const cell of hint.cells) {
+    // If validateOnlyHighlighted is set, only validate the highlighted cells
+    const cellsToValidate = hint.validateOnlyHighlighted && hint.highlight 
+        ? (hint.highlight.type === 'cell' 
+            ? [{ r: hint.highlight.r, c: hint.highlight.c }]
+            : (hint.highlight.cells || []))
+        : hint.cells;
+
+    for (const cell of cellsToValidate) {
         const solutionValue = solution[cell.r][cell.c];
         if (solutionValue !== expectedValue) {
             if (DEBUG_HINTS) {
@@ -5774,6 +5893,8 @@ function getHint() {
         // ===== LEVEL 5: COMPLEX (hypothetical reasoning / lookahead) =====
         // Completing a row/col would cause an error elsewhere
         { name: 'hintRowColCompletionCausesError', fn: () => hintRowColCompletionCausesError(merged) },
+        // Only 4 empty cells left with two valid solutions
+        { name: 'hintTwoValidSolutions', fn: () => hintTwoValidSolutions(merged, null) },
 
         // ===== LEVEL 6: TRIAL AND ERROR =====
         // No logical deduction possible, must try a hypothesis
@@ -5864,6 +5985,7 @@ function getHintForCell(targetR, targetC) {
         { name: 'hintCacheNearEdge', fn: () => hintCacheNearEdge(merged) },
         // ===== LEVEL 5: COMPLEX =====
         { name: 'hintRowColCompletionCausesError', fn: () => hintRowColCompletionCausesError(merged) },
+        { name: 'hintTwoValidSolutions', fn: () => hintTwoValidSolutions(merged, forCell) },
 
         // Note: hintFork is excluded - it doesn't apply to specific cells
     ];

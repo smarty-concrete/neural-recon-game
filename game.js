@@ -1,4 +1,3 @@
-// GLOBAL FIX: Prevent double-tap zoom via JS for environments that don't respect CSS 'manipulation'
 document.addEventListener('dblclick', function(e) {
     e.preventDefault();
 }, { passive: false });
@@ -426,11 +425,13 @@ function setAnimationDelay(element) {
 // ============================================
 const DATA_VAULT_UNLOCK_SIZE = 7; // Grid size at which data vaults are first introduced
 const DATA_VAULT_FIRST_SEED = 'YT5EGJ'; // Seed for first puzzle when unlocking data vaults
+const LOCKED_WALLS_AFFECT_GAMEPLAY = true; // Toggle to enable/disable gameplay locking
 
 let SIZE = 8;
 let solution = [];
 let layers = [];
 let currentIdx = 0;
+let lockedWalls = [];
 let targets = { r: [], c: [] };
 let forkAnchors = [null, null, null, null];
 let stockpilePos = null; // {r, c} position of data stockpile, or null if none
@@ -914,6 +915,7 @@ const GameState = (() => {
             layers,
             currentIdx,
             targets,
+            lockedWalls,
             forkAnchors,
             stockpilePos,
             undoState,
@@ -1011,6 +1013,7 @@ function init(resetStreak = true, specificSeed = null) {
 
     targets.r = solution.map(row => row.filter(v => v === 1).length);
     targets.c = Array(SIZE).fill(0).map((_, c) => solution.filter(r => r[c] === 1).length);
+    lockedWalls = findLockedWallsForAmbiguousSolutions();
     layers = [Array(SIZE * SIZE).fill(0)];
     forkAnchors = [null, null, null, null];
     currentIdx = 0;
@@ -1043,6 +1046,9 @@ function restoreGameState(state) {
     layers = state.layers;
     currentIdx = state.currentIdx;
     targets = state.targets;
+    lockedWalls = (state.lockedWalls && state.lockedWalls.length === SIZE * SIZE)
+        ? state.lockedWalls
+        : findLockedWallsForAmbiguousSolutions();
     forkAnchors = state.forkAnchors;
     stockpilePos = state.stockpilePos;
     undoState = state.undoState;
@@ -1979,14 +1985,18 @@ function handleCellAction(idx) {
     if (isWon) return;
 
     // Get merged value (what's visible) and current layer value
-    let mergedVal = 0;
+    let mergedVal = (LOCKED_WALLS_AFFECT_GAMEPLAY && lockedWalls[idx]) ? 1 : 0;
     for (let j = 0; j <= currentIdx; j++) {
         if (layers[j][idx] === 1) mergedVal = 1;
         else if (layers[j][idx] === 2 && mergedVal !== 1) mergedVal = 2;
     }
 
     // Check if this cell is locked by a lower layer
-    const isLocked = layers.slice(0, currentIdx).some(l => l[idx] !== 0);
+    const isLocked = isCellLocked(idx);
+
+    if (LOCKED_WALLS_AFFECT_GAMEPLAY && lockedWalls[idx]) {
+        return;
+    }
 
     // Check if this is a dead end node or data stockpile
     const isDeadEnd = isTargetDeadEnd(r, c);
@@ -2028,8 +2038,7 @@ function handleCellAction(idx) {
             if (isHintCell && mergedVal === 0 && !isDeadEnd && !isStockpile) {
                 // Apply the hint to just this cell
                 const fillValue = currentHint.shouldBe === 'wall' ? 1 : 2;
-                const isLocked = layers.slice(0, currentIdx).some(l => l[idx] !== 0);
-                if (!isLocked) {
+                if (!isCellLocked(idx)) {
                     saveUndoState();
                     if (currentIdx > 0 && forkAnchors[currentIdx] === null) {
                         forkAnchors[currentIdx] = {type: 'cell', idx: idx};
@@ -2178,8 +2187,7 @@ function handleCellAction(idx) {
         if (isDeadEnd || isStockpile) {
             // Check neighbors (only for dead ends, not stockpile) - requires dead-end fill assist
             if (isDeadEnd && isDeadEndFillEnabled()) {
-                const merged = Array(SIZE*SIZE).fill(0);
-                layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
+                const merged = getMergedBoard();
 
                 const neighbors = [[r-1,c],[r+1,c],[r,c-1],[r,c+1]];
                 let pathCount = 0;
@@ -2200,9 +2208,7 @@ function handleCellAction(idx) {
                 // If surrounded by 3 walls and 1 empty, add path to the empty spot
                 if (wallCount === 3 && emptyNeighbors.length === 1) {
                     const nIdx = emptyNeighbors[0];
-                    let locked = false;
-                    for (let j = 0; j < currentIdx; j++) if (layers[j][nIdx] !== 0) locked = true;
-                    if (!locked) {
+                    if (!isCellLocked(nIdx)) {
                         if (currentIdx > 0 && forkAnchors[currentIdx] === null) {
                             forkAnchors[currentIdx] = {type: 'cell', idx: idx};
                         }
@@ -2222,9 +2228,7 @@ function handleCellAction(idx) {
                     }
                     emptyNeighbors.forEach(nIdx => {
                         // Only fill if not locked by lower layer
-                        let locked = false;
-                        for (let j = 0; j < currentIdx; j++) if (layers[j][nIdx] !== 0) locked = true;
-                        if (!locked) layers[currentIdx][nIdx] = 1;
+                        if (!isCellLocked(nIdx)) layers[currentIdx][nIdx] = 1;
                     });
                     ChipSound.autoComplete();
                     moveCount++;
@@ -2285,7 +2289,7 @@ function handleCellAction(idx) {
                 // wall -> path, path -> empty
                 dragMode = dragStartVal === 1 ? 2 : 0;
                 // Toggle the start cell (only if not locked)
-                const startLocked = layers.slice(0, currentIdx).some(l => l[dragStartIdx] !== 0);
+                const startLocked = isCellLocked(dragStartIdx);
                 if (!startLocked) {
                     if (currentIdx > 0 && forkAnchors[currentIdx] === null) {
                         forkAnchors[currentIdx] = {type: 'cell', idx: dragStartIdx}; // Anchor on start cell if we modify it
@@ -2357,8 +2361,7 @@ function isFixedPath(r, c) {
 function handleLabelClick(isRow, index) {
     if (isWon) return;
 
-    const merged = Array(SIZE*SIZE).fill(0);
-    layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
+    const merged = getMergedBoard();
 
     // Count current walls and paths in this row/column
     let wallCount = 0, pathCount = 0;
@@ -2391,9 +2394,7 @@ function handleLabelClick(isRow, index) {
         const idx = isRow ? index * SIZE + i : i * SIZE + index;
         const r = Math.floor(idx / SIZE), c = idx % SIZE;
         if (merged[idx] === 0 && !isFixedPath(r, c)) {
-            let locked = false;
-            for (let j = 0; j < currentIdx; j++) if (layers[j][idx] !== 0) locked = true;
-            if (!locked) hasEmpty = true;
+            if (!isCellLocked(idx)) hasEmpty = true;
         }
     }
     if (!hasEmpty) return;
@@ -2412,10 +2413,8 @@ function handleLabelClick(isRow, index) {
         const r = Math.floor(idx / SIZE), c = idx % SIZE;
 
         if (merged[idx] === 0 && !isFixedPath(r, c)) {
-            // Check if locked by lower layer
-            let locked = false;
-            for (let j = 0; j < currentIdx; j++) if (layers[j][idx] !== 0) locked = true;
-            if (!locked) {
+            // Check if locked by lower layer or generator
+            if (!isCellLocked(idx)) {
                 layers[currentIdx][idx] = fillType;
             }
         }
@@ -2572,6 +2571,381 @@ function isValidAlternateSolution(merged) {
     return true;
 }
 
+function findLockedWallsForAmbiguousSolutions() {
+    const locked = Array(SIZE * SIZE).fill(false);
+    const merged = Array(SIZE * SIZE).fill(0);
+    const solverGuard = {
+        steps: 0,
+        maxSteps: 8000,
+        maxDepth: 24
+    };
+
+    function guardExceeded() {
+        solverGuard.steps++;
+        return solverGuard.steps > solverGuard.maxSteps;
+    }
+
+    function isSolved(mergedBoard) {
+        return isValidAlternateSolution(mergedBoard);
+    }
+
+    function hasContradiction(mergedBoard) {
+        // 1. Invalid dead end (path boxed in by 3+ walls that isn't a dead end node)
+        if (findInvalidDeadEnd(mergedBoard)) return true;
+
+        // 2. Row/column over limit
+        for (let r = 0; r < SIZE; r++) {
+            const { walls, paths, target, expectedPaths } = getRowCounts(mergedBoard, r);
+            if (walls > target || paths > expectedPaths) return true;
+        }
+        for (let c = 0; c < SIZE; c++) {
+            const { walls, paths, target, expectedPaths } = getColCounts(mergedBoard, c);
+            if (walls > target || paths > expectedPaths) return true;
+        }
+
+        // 3. 2x2 path block (outside vault)
+        for (let r = 0; r < SIZE - 1; r++) {
+            for (let c = 0; c < SIZE - 1; c++) {
+                let allPaths = true;
+                let nearStockpile = false;
+                for (const [dr, dc] of [[0, 0], [0, 1], [1, 0], [1, 1]]) {
+                    const cr = r + dr, cc = c + dc;
+                    const idx = cr * SIZE + cc;
+                    if (mergedBoard[idx] !== 2 && !isFixedPath(cr, cc)) allPaths = false;
+                    if (stockpilePos && Math.abs(cr - stockpilePos.r) <= 1 && Math.abs(cc - stockpilePos.c) <= 1) {
+                        nearStockpile = true;
+                    }
+                }
+                if (allPaths && !nearStockpile) return true;
+            }
+        }
+
+        // 4. Dead end with multiple paths
+        for (let r = 0; r < SIZE; r++) {
+            for (let c = 0; c < SIZE; c++) {
+                if (!isTargetDeadEnd(r, c)) continue;
+                let pathCount = 0;
+                for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nr = r + dr, nc = c + dc;
+                    if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) continue;
+                    const nIdx = nr * SIZE + nc;
+                    if (mergedBoard[nIdx] === 2 || isFixedPath(nr, nc)) pathCount++;
+                }
+                if (pathCount > 1) return true;
+            }
+        }
+
+        // 5. Cut-off section of the grid (walls separating regions so paths can't connect)
+        const nonWallCells = [];
+        for (let i = 0; i < SIZE * SIZE; i++) {
+            if (mergedBoard[i] !== 1) nonWallCells.push(i);
+        }
+        if (nonWallCells.length > 1) {
+            const visited = new Set();
+            const stack = [nonWallCells[0]];
+            visited.add(nonWallCells[0]);
+
+            while (stack.length > 0) {
+                const idx = stack.pop();
+                const r = Math.floor(idx / SIZE), c = idx % SIZE;
+                for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nr = r + dr, nc = c + dc;
+                    if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE) {
+                        const nIdx = nr * SIZE + nc;
+                        if (!visited.has(nIdx) && mergedBoard[nIdx] !== 1) {
+                            visited.add(nIdx);
+                            stack.push(nIdx);
+                        }
+                    }
+                }
+            }
+
+            if (visited.size < nonWallCells.length) return true;
+        }
+
+        return false;
+    }
+
+    function getDeterministicHint(mergedBoard) {
+        const hintFunctions = [
+            { name: 'hintTrivialRowCol', fn: () => hintTrivialRowCol(mergedBoard) },
+            { name: 'hintDeadEndCanBeFinished', fn: () => hintDeadEndCanBeFinished(mergedBoard) },
+            { name: 'hint2x2With3Paths', fn: () => hint2x2With3Paths(mergedBoard) },
+            { name: 'hintVaultPerimeterComplete', fn: () => hintVaultPerimeterComplete(mergedBoard) },
+            { name: 'hintPathMustExtend', fn: () => hintPathMustExtend(mergedBoard) },
+            { name: 'hintRowColComplete', fn: () => hintRowColComplete(mergedBoard) },
+            { name: 'hintEmptyDeadEndMustBeWall', fn: () => hintEmptyDeadEndMustBeWall(mergedBoard, null) },
+            { name: 'hintVaultInteriorMustBePath', fn: () => hintVaultInteriorMustBePath(mergedBoard) },
+            { name: 'hintVaultExitDeadEnd', fn: () => hintVaultExitDeadEnd(mergedBoard) },
+            { name: 'hintDeadEndAdjacent', fn: () => hintDeadEndAdjacent(mergedBoard) },
+            { name: 'hintCornerFlankingDeadEnds', fn: () => hintCornerFlankingDeadEnds(mergedBoard) },
+            { name: 'hintDeadEndOr2x2Squeeze', fn: () => hintDeadEndOr2x2Squeeze(mergedBoard) },
+            { name: 'hintEdgeDeadEndOneWall', fn: () => hintEdgeDeadEndOneWall(mergedBoard) },
+            { name: 'hintEdgeCornerDeadEnd', fn: () => hintEdgeCornerDeadEnd(mergedBoard) },
+            { name: 'hintCacheNearEdge', fn: () => hintCacheNearEdge(mergedBoard) },
+            { name: 'hintRowColCompletionCausesError', fn: () => hintRowColCompletionCausesError(mergedBoard) }
+        ];
+
+        for (const { name, fn } of hintFunctions) {
+            const hint = fn();
+            if (hint && hint.cells && hint.shouldBe) {
+                return hint;
+            }
+        }
+        return null;
+    }
+
+    function applyHint(mergedBoard, hint) {
+        const value = hint.shouldBe === 'wall' ? 1 : 2;
+        let changed = false;
+        for (const cell of hint.cells) {
+            const idx = cell.r * SIZE + cell.c;
+            if (mergedBoard[idx] === 0) {
+                mergedBoard[idx] = value;
+                changed = true;
+            } else if (mergedBoard[idx] !== value) {
+                return { conflict: true, changed: false };
+            }
+        }
+        return { conflict: false, changed };
+    }
+
+    function findVaultExitCandidates() {
+        if (!stockpilePos) return [];
+        for (let roomR = Math.max(0, stockpilePos.r - 2); roomR <= Math.min(stockpilePos.r, SIZE - 3); roomR++) {
+            for (let roomC = Math.max(0, stockpilePos.c - 2); roomC <= Math.min(stockpilePos.c, SIZE - 3); roomC++) {
+                if (stockpilePos.r < roomR || stockpilePos.r > roomR + 2 ||
+                    stockpilePos.c < roomC || stockpilePos.c > roomC + 2) continue;
+
+                let interiorClear = true;
+                for (let dr = 0; dr < 3 && interiorClear; dr++) {
+                    for (let dc = 0; dc < 3 && interiorClear; dc++) {
+                        if (solution[roomR + dr][roomC + dc] === 1) interiorClear = false;
+                    }
+                }
+                if (!interiorClear) continue;
+
+                let doorCells = [];
+                let wallCount = 0;
+                for (let dc = 0; dc < 3; dc++) {
+                    if (roomR === 0) {
+                        wallCount++;
+                    } else if (solution[roomR - 1][roomC + dc] === 1) {
+                        wallCount++;
+                    } else {
+                        doorCells.push((roomR - 1) * SIZE + (roomC + dc));
+                    }
+
+                    if (roomR + 2 === SIZE - 1) {
+                        wallCount++;
+                    } else if (solution[roomR + 3][roomC + dc] === 1) {
+                        wallCount++;
+                    } else {
+                        doorCells.push((roomR + 3) * SIZE + (roomC + dc));
+                    }
+                }
+                for (let dr = 0; dr < 3; dr++) {
+                    if (roomC === 0) {
+                        wallCount++;
+                    } else if (solution[roomR + dr][roomC - 1] === 1) {
+                        wallCount++;
+                    } else {
+                        doorCells.push((roomR + dr) * SIZE + (roomC - 1));
+                    }
+
+                    if (roomC + 2 === SIZE - 1) {
+                        wallCount++;
+                    } else if (solution[roomR + dr][roomC + 3] === 1) {
+                        wallCount++;
+                    } else {
+                        doorCells.push((roomR + dr) * SIZE + (roomC + 3));
+                    }
+                }
+
+                if (wallCount === 11) return doorCells;
+            }
+        }
+        return [];
+    }
+
+    function chooseForkCell(mergedBoard) {
+        // Priority 1: path out of dead end
+        for (let r = 0; r < SIZE; r++) {
+            for (let c = 0; c < SIZE; c++) {
+                if (!isTargetDeadEnd(r, c)) continue;
+                for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nr = r + dr, nc = c + dc;
+                    if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) continue;
+                    if (isFixedPath(nr, nc)) continue;
+                    const nIdx = nr * SIZE + nc;
+                    if (mergedBoard[nIdx] === 0) return nIdx;
+                }
+            }
+        }
+
+        // Priority 2: row/col needs one more path
+        for (let r = 0; r < SIZE; r++) {
+            const { walls, paths, target } = getRowCounts(mergedBoard, r);
+            const expectedPaths = SIZE - target;
+            if (expectedPaths - paths === 1) {
+                for (let c = 0; c < SIZE; c++) {
+                    const idx = r * SIZE + c;
+                    if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+                }
+            }
+        }
+        for (let c = 0; c < SIZE; c++) {
+            const { walls, paths, target } = getColCounts(mergedBoard, c);
+            const expectedPaths = SIZE - target;
+            if (expectedPaths - paths === 1) {
+                for (let r = 0; r < SIZE; r++) {
+                    const idx = r * SIZE + c;
+                    if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+                }
+            }
+        }
+
+        // Priority 3: row/col needs one more wall
+        for (let r = 0; r < SIZE; r++) {
+            const { walls, target } = getRowCounts(mergedBoard, r);
+            if (target - walls === 1) {
+                for (let c = 0; c < SIZE; c++) {
+                    const idx = r * SIZE + c;
+                    if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+                }
+            }
+        }
+        for (let c = 0; c < SIZE; c++) {
+            const { walls, target } = getColCounts(mergedBoard, c);
+            if (target - walls === 1) {
+                for (let r = 0; r < SIZE; r++) {
+                    const idx = r * SIZE + c;
+                    if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+                }
+            }
+        }
+
+        // Priority 4: path out of a vault (door cell)
+        const vaultExitCandidates = findVaultExitCandidates();
+        for (const idx of vaultExitCandidates) {
+            const r = Math.floor(idx / SIZE);
+            const c = idx % SIZE;
+            if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+        }
+
+        // Fallback: first empty cell
+        for (let i = 0; i < SIZE * SIZE; i++) {
+            const r = Math.floor(i / SIZE), c = i % SIZE;
+            if (mergedBoard[i] === 0 && !isFixedPath(r, c)) return i;
+        }
+
+        return null;
+    }
+
+    function copyMerged(target, source) {
+        for (let i = 0; i < target.length; i++) {
+            target[i] = source[i];
+        }
+    }
+
+    function solveWithHints(mergedBoard) {
+        while (true) {
+            if (guardExceeded())
+                return { status: 'stuck' };
+            if (hasContradiction(mergedBoard))
+                return { status: 'conflict' };
+            if (isSolved(mergedBoard))
+                return { status: 'solved' };
+
+            const hint = getDeterministicHint(mergedBoard);
+            if (!hint) return { status: 'stuck' };
+            const result = applyHint(mergedBoard, hint);
+            if (result.conflict) return { status: 'conflict' };
+            if (!result.changed) return { status: 'stuck' };
+        }
+    }
+
+    function solveWithForks(mergedBoard, depth = 0) {
+        if (depth > solverGuard.maxDepth) return { status: 'stuck', board: mergedBoard };
+
+        while (true) {
+            const hintResult = solveWithHints(mergedBoard);
+            if (hintResult.status !== 'stuck') {
+                return { status: hintResult.status, board: mergedBoard };
+            }
+
+            const decisionIdx = chooseForkCell(mergedBoard);
+            if (decisionIdx === null) return { status: 'stuck', board: mergedBoard };
+
+            const wallBranch = mergedBoard.slice();
+            wallBranch[decisionIdx] = 1;
+            const pathBranch = mergedBoard.slice();
+            pathBranch[decisionIdx] = 2;
+
+            const wallResult = solveWithForks(wallBranch, depth + 1);
+            const pathResult = solveWithForks(pathBranch, depth + 1);
+
+            if (wallResult.status === 'conflict' && pathResult.status === 'conflict') {
+                return { status: 'conflict', board: mergedBoard };
+            }
+
+            if (wallResult.status === 'solved' && pathResult.status === 'solved') {
+                const newLocks = [];
+                for (let i = 0; i < SIZE * SIZE; i++) {
+                    if (wallResult.board[i] === pathResult.board[i]) continue;
+                    const r = Math.floor(i / SIZE);
+                    const c = i % SIZE;
+                    if (solution[r][c] === 1) {
+                        if (!locked[i]) newLocks.push(i);
+                    }
+                }
+
+                if (newLocks.length === 0) {
+                    return { status: 'solved', board: mergedBoard };
+                }
+
+                let bestIdx = newLocks[0];
+                let bestScore = -Infinity;
+                for (const idx of newLocks) {
+                    const r = Math.floor(idx / SIZE);
+                    const c = idx % SIZE;
+                    const rowCounts = getRowCounts(mergedBoard, r);
+                    const colCounts = getColCounts(mergedBoard, c);
+                    const remainingRowWalls = rowCounts.target - rowCounts.walls;
+                    const remainingColWalls = colCounts.target - colCounts.walls;
+                    const score = remainingRowWalls + remainingColWalls;
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestIdx = idx;
+                    }
+                }
+
+                locked[bestIdx] = true;
+                mergedBoard[bestIdx] = 1;
+                continue;
+            }
+
+            if (wallResult.status === 'conflict' && pathResult.status !== 'conflict') {
+                copyMerged(mergedBoard, pathResult.board);
+                continue;
+            }
+            if (pathResult.status === 'conflict' && wallResult.status !== 'conflict') {
+                copyMerged(mergedBoard, wallResult.board);
+                continue;
+            }
+
+            if (wallResult.status === 'solved' || pathResult.status === 'solved') {
+                return { status: 'solved', board: mergedBoard };
+            }
+
+            return { status: 'stuck', board: mergedBoard };
+        }
+    }
+
+    solveWithForks(merged);
+    return locked;
+}
+
 function getShortestPathBetween(merged, startIdx, endIdx) {
     let queue = [[startIdx]];
     let visited = new Set([startIdx]);
@@ -2599,8 +2973,7 @@ function update() {
     const cells = document.getElementById('mainGrid').querySelectorAll('.cell');
     const rl = document.getElementById('rowLabels').children;
     const cl = document.getElementById('colLabels').children;
-    const merged = Array(SIZE*SIZE).fill(0);
-    layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
+    const merged = getMergedBoard();
 
     // Check for win: either exact match OR valid alternate solution
     let allWallsCorrect = true;
@@ -3002,6 +3375,18 @@ function update() {
             cell.appendChild(keyOverlay);
         }
 
+        if (lockedWalls[i]) {
+            let lockedWall;
+            if (typeof ThemeManager !== 'undefined' && ThemeManager.current()?.renderWall) {
+                lockedWall = ThemeManager.render.wall(0, false, false);
+            } else {
+                lockedWall = document.createElement('div');
+                lockedWall.className = 'wall wall-l0';
+            }
+            lockedWall.classList.add('wall-locked');
+            cell.appendChild(lockedWall);
+        }
+
         layers.forEach((layer, lIdx) => {
             if (layer[i] === 1) {
                 const isError = rowTotals[r] > targets.r[r] || colTotals[c] > targets.c[c];
@@ -3124,8 +3509,7 @@ function triggerVictorySequence() {
     const cells = document.getElementById('mainGrid').querySelectorAll('.cell');
     const rl = document.getElementById('rowLabels').children;
     const cl = document.getElementById('colLabels').children;
-    const merged = Array(SIZE*SIZE).fill(0);
-    layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
+    const merged = getMergedBoard();
 
     // Quick render of walls and path dots
     for(let i=0; i<SIZE*SIZE; i++) {
@@ -3167,6 +3551,10 @@ function triggerVictorySequence() {
                     }
                 });
             }
+        }
+
+        if (lockedWalls[i]) {
+            cell.appendChild(Object.assign(document.createElement('div'), {className: 'wall wall-l0 wall-locked'}));
         }
 
         layers.forEach((layer, lIdx) => {
@@ -3644,9 +4032,20 @@ function cellRef(r, c) {
     return `${colToLetter(c)}${rowToNumber(r)}`;
 }
 
+// Check if a cell is locked (lower layer, plus generator lock when enabled)
+function isCellLocked(idx) {
+    if (LOCKED_WALLS_AFFECT_GAMEPLAY && lockedWalls[idx]) return true;
+    return layers.slice(0, currentIdx).some(l => l[idx] !== 0);
+}
+
 // Get merged board state (walls=1, paths=2, empty=0)
 function getMergedBoard() {
     const merged = Array(SIZE * SIZE).fill(0);
+    if (LOCKED_WALLS_AFFECT_GAMEPLAY) {
+        lockedWalls.forEach((locked, i) => {
+            if (locked) merged[i] = 1;
+        });
+    }
     layers.forEach(l => l.forEach((s, i) => {
         if (s === 1) merged[i] = 1;
         if (s === 2 && merged[i] !== 1) merged[i] = 2;
@@ -4785,7 +5184,7 @@ function hintRowColCompletionCausesError(merged) {
             if (merged[idx] !== 0 || isFixedPath(r, c)) continue;
 
             // Check if locked by lower layer
-            const isLocked = layers.slice(0, currentIdx).some(l => l[idx] !== 0);
+            const isLocked = isCellLocked(idx);
             if (isLocked) continue;
 
             // Try placing a wall here
@@ -6257,7 +6656,7 @@ function applyHintCells(hint) {
         if (isFixedPath(cell.r, cell.c)) continue;
 
         // Skip if locked by lower layer
-        const isLocked = layers.slice(0, currentIdx).some(l => l[idx] !== 0);
+        const isLocked = isCellLocked(idx);
         if (isLocked) continue;
 
         // Set fork anchor on first cell we apply in a fork layer

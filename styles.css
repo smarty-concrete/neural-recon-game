@@ -641,6 +641,19 @@ body {
 .wall-l1 { background: var(--neon-blue); box-shadow: 0 0 10px var(--neon-blue); }
 .wall-l2 { background: var(--neon-amber); box-shadow: 0 0 10px var(--neon-amber); }
 .wall-l3 { background: var(--neon-magenta); box-shadow: 0 0 10px var(--neon-magenta); }
+.wall-locked {
+    background: var(--bg-black);
+    outline: 2px solid rgba(255, 255, 255, 0.6);
+    box-shadow: none;
+    outline-offset: -2px;
+    background-image: repeating-linear-gradient(
+        45deg,
+        rgba(255, 255, 255, 0.25) 0px,
+        rgba(255, 255, 255, 0.25) 2px,
+        rgba(0, 0, 0, 0) 2px,
+        rgba(0, 0, 0, 0) 4px
+    );
+}
 .wall-error { background: var(--neon-red) !important; box-shadow: 0 0 15px var(--neon-red) !important; z-index: 15; animation-name: err-pulse; animation-duration: 1.5s; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
 .wall-error-dim { background: var(--neon-red) !important; box-shadow: none !important; opacity: 0.4; }
 
@@ -1455,6 +1468,19 @@ body {
 }
 .cell-icon-wall {
     background: var(--neon-cyan); box-shadow: 0 0 6px var(--neon-cyan);
+}
+.cell-icon-locked {
+    background: var(black,);
+    opacity: 0.4;
+    outline: 2px solid rgba(255, 255, 255, 0.6);
+    outline-offset: -2px;
+    background-image: repeating-linear-gradient(
+        45deg,
+        rgba(255, 255, 255, 0.25) 0px,
+        rgba(255, 255, 255, 0.25) 2px,
+        rgba(0, 0, 0, 0) 2px,
+        rgba(0, 0, 0, 0) 4px
+    );
 }
 .cell-icon-path {
     position: relative;

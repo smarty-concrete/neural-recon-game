@@ -57,11 +57,11 @@
                     <h3>Cell Types</h3>
                     <div class="briefing-row">
                         <span class="cell-icon cell-icon-wall"></span>
-                        <span class="briefing-row-label"><span class="briefing-tag theme-wall">Wall</span> — Click once to place. Blocks the path. Fill in all <span class="theme-walls">walls</span> to finish the puzzle.</span>
+                        <span class="briefing-row-label"><span class="briefing-tag theme-wall">Wall</span> — Blocks the <span class="theme-path">path</span>. Fill in all <span class="theme-walls">walls</span> to finish the puzzle.</span>
                     </div>
                     <div class="briefing-row">
                         <span class="cell-icon cell-icon-path"></span>
-                        <span class="briefing-row-label"><span class="briefing-tag theme-path">Path</span> — Click twice to place. Marks where the path goes. It is not necessary to fill in all paths to finish the puzzle.</span>
+                        <span class="briefing-row-label"><span class="briefing-tag theme-path">Path</span> — Marks where the path goes. It is not necessary to fill in all paths to finish the puzzle.</span>
                     </div>
                     <div class="briefing-row">
                         <span class="cell-icon cell-icon-deadend"></span>
@@ -71,15 +71,19 @@
                         <span class="cell-icon cell-icon-stockpile"></span>
                         <span class="briefing-row-label"><span class="briefing-tag theme-stockpile">Stockpile</span> — <span id="stockpileDesc">Located inside a 3×3 vault surrounded by walls with one door. Turns green when the vault is properly sealed.</span></span>
                     </div>
+                    <div class="briefing-row">
+                        <span class="cell-icon cell-icon-locked"></span>
+                        <span class="briefing-row-label"><span class="briefing-tag">Lock</span> — Like <span class="theme-walls">walls</span>, these block the <span class="theme-path">path</span>. However, these nodes are fixed on the grid and cannot be removed.</span>
+                    </div>
                 </div>
 
                 <div class="briefing-section">
                     <h3>Controls</h3>
                     <p>Use the <span class="briefing-tag">Mode</span> buttons to select what to draw:</p>
-                    <p><span class="briefing-tag theme-wall">Wall</span> — Tap to place <span class="theme-wall">walls</span>, tap <span class="theme-wall">walls</span> to erase</p>
-                    <p><span class="briefing-tag theme-path">Path</span> — Tap to place paths, tap paths to erase</p>
+                    <p><span class="briefing-tag theme-wall">Wall</span> — Tap to place <span class="theme-walls">walls</span>, tap <span class="theme-walls">walls</span> to erase</p>
+                    <p><span class="briefing-tag theme-path">Path</span> — Tap to place <span class="theme-paths">paths</span>, tap <span class="theme-paths">paths</span> to erase</p>
                     <p><span class="briefing-tag">Erase</span> — Tap any cell to clear it</p>
-                    <p><span class="briefing-tag">Auto</span> — Context-aware: tap empty for <span class="theme-wall">wall</span>, tap <span class="theme-wall">wall</span> for path, tap path to erase. Drag from <span class="theme-deadends">dead ends</span> or <span class="theme-stockpile">data caches</span> to draw paths. Tap on <span class="theme-deadends">dead ends</span> to auto-fill <span class="theme-walls">walls</span> and paths when able.</p>
+                    <p><span class="briefing-tag">Auto</span> — Context-aware: tap empty for <span class="theme-wall">wall</span>, tap <span class="theme-wall">wall</span> for path, tap path to erase. Drag from <span class="theme-deadends">dead ends</span> or <span class="theme-stockpile">data caches</span> to draw paths. Tap on <span class="theme-deadends">dead ends</span> to auto-fill <span class="theme-walls">walls</span> and paths when able. Tap on the tool twice for a quick overview.</p>
                 </div>
 
                 <div class="briefing-section">

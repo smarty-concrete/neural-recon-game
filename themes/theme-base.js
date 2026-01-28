@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Theme Base Configuration
  * Defines the interface that all themes must implement
  */
@@ -49,7 +49,7 @@ const ThemeBase = {
 
     // Font configuration
     fonts: {
-        primary: "'Segoe UI', system-ui, -apple-system, sans-serif",
+        primary: "monospace",
         mono: "'Courier New', monospace",
         display: "'Courier New', monospace",  // For numbers/labels
         heading: "'Courier New', monospace"   // For titles

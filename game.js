@@ -1,4 +1,3 @@
-﻿// GLOBAL FIX: Prevent double-tap zoom via JS for environments that don't respect CSS 'manipulation'
 document.addEventListener('dblclick', function(e) {
     e.preventDefault();
 }, { passive: false });
@@ -426,11 +425,13 @@ function setAnimationDelay(element) {
 // ============================================
 const DATA_VAULT_UNLOCK_SIZE = 7; // Grid size at which data vaults are first introduced
 const DATA_VAULT_FIRST_SEED = 'YT5EGJ'; // Seed for first puzzle when unlocking data vaults
+const LOCKED_WALLS_AFFECT_GAMEPLAY = true; // Toggle to enable/disable gameplay locking
 
 let SIZE = 8;
 let solution = [];
 let layers = [];
 let currentIdx = 0;
+let lockedWalls = [];
 let targets = { r: [], c: [] };
 let forkAnchors = [null, null, null, null];
 let stockpilePos = null; // {r, c} position of data stockpile, or null if none
@@ -438,12 +439,90 @@ let isWon = false;
 let showKey = false;
 let undoState = null; // Single undo state: {layers, currentIdx, forkAnchors}
 
+// ============================================
+// RESPONSIVE LAYOUT (board sizing)
+// ============================================
+// Goal: Board uses as much width as possible while never exceeding 90% of the
+// available height under the top bars (header + mode strip).
+//
+// The board footprint includes row/col labels + a right spacer:
+// - Width  ~= (SIZE + 2) * cell + (SIZE - 1) * gap + 2*border
+// - Height ~= (SIZE + 1) * cell + (SIZE - 1) * gap + 2*border
+const BOARD_GAP_PX = 1;      // .cyber-grid gap and label container gap
+const BOARD_BORDER_PX = 2;   // .cyber-grid border width
+let _layoutRaf = null;
+
+function _cssVarPx(varName) {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function scheduleLayoutUpdate() {
+    if (_layoutRaf !== null) return;
+    _layoutRaf = requestAnimationFrame(() => {
+        _layoutRaf = null;
+        updateResponsiveBoardSizing();
+    });
+}
+
+function updateResponsiveBoardSizing() {
+    const wrapper = document.querySelector('.grid-wrapper');
+    if (!wrapper) return;
+
+    // Keep CSS grid-size in sync for any CSS that references it.
+    document.documentElement.style.setProperty('--grid-size', String(SIZE));
+
+    const safeLeft = _cssVarPx('--safe-area-left');
+    const safeRight = _cssVarPx('--safe-area-right');
+    const safeBottom = _cssVarPx('--safe-area-bottom');
+
+    const viewportW = document.documentElement.clientWidth;
+    const viewportH = window.innerHeight;
+
+    const wrapperStyle = getComputedStyle(wrapper);
+    const padX = (parseFloat(wrapperStyle.paddingLeft) || 0) + (parseFloat(wrapperStyle.paddingRight) || 0);
+    const padY = (parseFloat(wrapperStyle.paddingTop) || 0) + (parseFloat(wrapperStyle.paddingBottom) || 0);
+
+    const widthOverdraw = 1.05;
+    const availableW = Math.max(0, (viewportW - safeLeft - safeRight) * widthOverdraw);
+    // Use the wrapper's actual top position to account for safe areas, sticky
+    // headers, and any dynamic bar heights.
+    const wrapperTop = wrapper.getBoundingClientRect().top;
+    const availableHBelowBars = Math.max(0, viewportH - wrapperTop - safeBottom);
+    const maxWrapperTotalH = availableHBelowBars * 0.9;
+
+    // Constrain the wrapper's *total* size (including padding/margins) to what fits.
+    const maxWrapperContentW = Math.max(0, availableW - padX);
+    const maxWrapperContentH = Math.max(0, maxWrapperTotalH - padY);
+
+    // Board content size equations.
+    const gapSpan = (SIZE - 1) * BOARD_GAP_PX;
+    const borderSpan = 2 * BOARD_BORDER_PX;
+
+    const maxCellByW = (maxWrapperContentW - gapSpan - borderSpan) / (SIZE + 2);
+    const maxCellByH = (maxWrapperContentH - gapSpan - borderSpan) / (SIZE + 1);
+
+    // Keep a sensible floor to avoid unusably tiny boards.
+    const cell = Math.floor(Math.max(12, Math.min(maxCellByW, maxCellByH)));
+    if (!Number.isFinite(cell) || cell <= 0) return;
+
+    document.documentElement.style.setProperty('--cell-size', `${cell}px`);
+}
+
 // Tutorial mode state
 let isTutorialMode = false;
 let isUserInitiatedTutorial = false; // True if user started tutorial on current puzzle
+let isTutorialHintsOnly = false; // If true, show hints but don't hide/lock tools or force tool selection
 let tutorialHint = null; // Current hint being shown in tutorial
 let hasCompletedTutorial = false; // Track if user has completed the tutorial
+let lastTutorialTool = null; // Track the last required tool in tutorial mode
+let wallSwitchCount = 0; // Count how many times we've switched to walls
+let pathSwitchCount = 0; // Count how many times we've switched to paths
 let hasSeenDataVaultIntro = false; // Track if user has seen data vault intro
+let hasSeenAutoToolExplanation = false; // Track if user has seen Auto tool explanation
+let hasSeenForkExplanation = false; // Track if user has seen Fork explanation
+let hasSeenHintExplanation = false; // Track if user has seen Hint explanation
 
 // Seeded random number generator (Mulberry32)
 let currentSeed = null;
@@ -645,11 +724,10 @@ let moveCount = 0;
 let winStreak = 0;
 
 // ============================================
-// PERSISTENT PLAYER STATS (Cookie-based)
+// PERSISTENT PLAYER STATS (localStorage-based)
 // ============================================
 const PlayerStats = (() => {
-    const COOKIE_NAME = 'neuralReconStats';
-    const COOKIE_DAYS = 365 * 5; // 5 years
+    const STORAGE_KEY = 'neuralReconStats';
 
     const defaultStats = {
         totalWins: 0,
@@ -658,34 +736,26 @@ const PlayerStats = (() => {
         bySize: {}           // { "4": {wins, bestStreak, fastestTime, fewestMoves}, ... }
     };
 
-    function setCookie(name, value, days) {
-        const expires = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toUTCString();
-        document.cookie = `${name}=${encodeURIComponent(JSON.stringify(value))}; expires=${expires}; path=/; SameSite=Lax`;
-    }
-
-    function getCookie(name) {
-        const match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-        if (match) {
-            try {
-                return JSON.parse(decodeURIComponent(match[2]));
-            } catch (e) {
-                return null;
-            }
-        }
-        return null;
-    }
-
     function load() {
-        const saved = getCookie(COOKIE_NAME);
-        if (saved) {
-            // Merge with defaults to handle new fields
-            return { ...defaultStats, ...saved };
+        try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                // Merge with defaults to handle new fields
+                return { ...defaultStats, ...parsed };
+            }
+        } catch (e) {
+            console.warn('Failed to load player stats:', e);
         }
         return { ...defaultStats };
     }
 
     function save(stats) {
-        setCookie(COOKIE_NAME, stats, COOKIE_DAYS);
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(stats));
+        } catch (e) {
+            console.warn('Failed to save player stats:', e);
+        }
     }
 
     let stats = load();
@@ -845,6 +915,7 @@ const GameState = (() => {
             layers,
             currentIdx,
             targets,
+            lockedWalls,
             forkAnchors,
             stockpilePos,
             undoState,
@@ -923,9 +994,8 @@ function init(resetStreak = true, specificSeed = null) {
 
     SIZE = parseInt(document.getElementById('gridSizeSelect').value);
 
-    let scaleFactor = (SIZE <= 4) ? 1.8 : (SIZE <= 6 ? 1.4 : 1.0);
-    document.documentElement.style.setProperty('--grid-size', SIZE);
-    document.documentElement.style.setProperty('--cell-size', `min(${10 * scaleFactor}vw, ${10 * scaleFactor}vh, 75px)`);
+    // Update responsive sizing before rendering the new grid.
+    scheduleLayoutUpdate();
 
     // Set up seed for this game
     const seed = specificSeed || generateSeed();
@@ -943,6 +1013,7 @@ function init(resetStreak = true, specificSeed = null) {
 
     targets.r = solution.map(row => row.filter(v => v === 1).length);
     targets.c = Array(SIZE).fill(0).map((_, c) => solution.filter(r => r[c] === 1).length);
+    lockedWalls = findLockedWallsForAmbiguousSolutions();
     layers = [Array(SIZE * SIZE).fill(0)];
     forkAnchors = [null, null, null, null];
     currentIdx = 0;
@@ -975,6 +1046,9 @@ function restoreGameState(state) {
     layers = state.layers;
     currentIdx = state.currentIdx;
     targets = state.targets;
+    lockedWalls = (state.lockedWalls && state.lockedWalls.length === SIZE * SIZE)
+        ? state.lockedWalls
+        : findLockedWallsForAmbiguousSolutions();
     forkAnchors = state.forkAnchors;
     stockpilePos = state.stockpilePos;
     undoState = state.undoState;
@@ -992,9 +1066,9 @@ function restoreGameState(state) {
 
     // Update UI to match restored size
     document.getElementById('gridSizeSelect').value = SIZE;
-    let scaleFactor = (SIZE <= 4) ? 1.8 : (SIZE <= 6 ? 1.4 : 1.0);
-    document.documentElement.style.setProperty('--grid-size', SIZE);
-    document.documentElement.style.setProperty('--cell-size', `min(${10 * scaleFactor}vw, ${10 * scaleFactor}vh, 75px)`);
+
+    // Ensure sizing reflects restored size.
+    scheduleLayoutUpdate();
 
     // Update seed display
     updateSeedDisplay();
@@ -1911,14 +1985,18 @@ function handleCellAction(idx) {
     if (isWon) return;
 
     // Get merged value (what's visible) and current layer value
-    let mergedVal = 0;
+    let mergedVal = (LOCKED_WALLS_AFFECT_GAMEPLAY && lockedWalls[idx]) ? 1 : 0;
     for (let j = 0; j <= currentIdx; j++) {
         if (layers[j][idx] === 1) mergedVal = 1;
         else if (layers[j][idx] === 2 && mergedVal !== 1) mergedVal = 2;
     }
 
     // Check if this cell is locked by a lower layer
-    const isLocked = layers.slice(0, currentIdx).some(l => l[idx] !== 0);
+    const isLocked = isCellLocked(idx);
+
+    if (LOCKED_WALLS_AFFECT_GAMEPLAY && lockedWalls[idx]) {
+        return;
+    }
 
     // Check if this is a dead end node or data stockpile
     const isDeadEnd = isTargetDeadEnd(r, c);
@@ -1926,7 +2004,7 @@ function handleCellAction(idx) {
 
     // Tutorial mode: in hint mode, allow completing hint cells
     // In other modes, only allow moves that match the current hint
-    if (isTutorialMode && drawingMode !== 'hint') {
+    if (isTutorialMode && !isTutorialHintsOnly && drawingMode !== 'hint') {
         // Determine what value would be placed
         let intendedValue = 0;
         if (drawingMode === 'wall') {
@@ -1960,8 +2038,7 @@ function handleCellAction(idx) {
             if (isHintCell && mergedVal === 0 && !isDeadEnd && !isStockpile) {
                 // Apply the hint to just this cell
                 const fillValue = currentHint.shouldBe === 'wall' ? 1 : 2;
-                const isLocked = layers.slice(0, currentIdx).some(l => l[idx] !== 0);
-                if (!isLocked) {
+                if (!isCellLocked(idx)) {
                     saveUndoState();
                     if (currentIdx > 0 && forkAnchors[currentIdx] === null) {
                         forkAnchors[currentIdx] = {type: 'cell', idx: idx};
@@ -2110,8 +2187,7 @@ function handleCellAction(idx) {
         if (isDeadEnd || isStockpile) {
             // Check neighbors (only for dead ends, not stockpile) - requires dead-end fill assist
             if (isDeadEnd && isDeadEndFillEnabled()) {
-                const merged = Array(SIZE*SIZE).fill(0);
-                layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
+                const merged = getMergedBoard();
 
                 const neighbors = [[r-1,c],[r+1,c],[r,c-1],[r,c+1]];
                 let pathCount = 0;
@@ -2132,9 +2208,7 @@ function handleCellAction(idx) {
                 // If surrounded by 3 walls and 1 empty, add path to the empty spot
                 if (wallCount === 3 && emptyNeighbors.length === 1) {
                     const nIdx = emptyNeighbors[0];
-                    let locked = false;
-                    for (let j = 0; j < currentIdx; j++) if (layers[j][nIdx] !== 0) locked = true;
-                    if (!locked) {
+                    if (!isCellLocked(nIdx)) {
                         if (currentIdx > 0 && forkAnchors[currentIdx] === null) {
                             forkAnchors[currentIdx] = {type: 'cell', idx: idx};
                         }
@@ -2154,9 +2228,7 @@ function handleCellAction(idx) {
                     }
                     emptyNeighbors.forEach(nIdx => {
                         // Only fill if not locked by lower layer
-                        let locked = false;
-                        for (let j = 0; j < currentIdx; j++) if (layers[j][nIdx] !== 0) locked = true;
-                        if (!locked) layers[currentIdx][nIdx] = 1;
+                        if (!isCellLocked(nIdx)) layers[currentIdx][nIdx] = 1;
                     });
                     ChipSound.autoComplete();
                     moveCount++;
@@ -2217,7 +2289,7 @@ function handleCellAction(idx) {
                 // wall -> path, path -> empty
                 dragMode = dragStartVal === 1 ? 2 : 0;
                 // Toggle the start cell (only if not locked)
-                const startLocked = layers.slice(0, currentIdx).some(l => l[dragStartIdx] !== 0);
+                const startLocked = isCellLocked(dragStartIdx);
                 if (!startLocked) {
                     if (currentIdx > 0 && forkAnchors[currentIdx] === null) {
                         forkAnchors[currentIdx] = {type: 'cell', idx: dragStartIdx}; // Anchor on start cell if we modify it
@@ -2289,8 +2361,7 @@ function isFixedPath(r, c) {
 function handleLabelClick(isRow, index) {
     if (isWon) return;
 
-    const merged = Array(SIZE*SIZE).fill(0);
-    layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
+    const merged = getMergedBoard();
 
     // Count current walls and paths in this row/column
     let wallCount = 0, pathCount = 0;
@@ -2323,9 +2394,7 @@ function handleLabelClick(isRow, index) {
         const idx = isRow ? index * SIZE + i : i * SIZE + index;
         const r = Math.floor(idx / SIZE), c = idx % SIZE;
         if (merged[idx] === 0 && !isFixedPath(r, c)) {
-            let locked = false;
-            for (let j = 0; j < currentIdx; j++) if (layers[j][idx] !== 0) locked = true;
-            if (!locked) hasEmpty = true;
+            if (!isCellLocked(idx)) hasEmpty = true;
         }
     }
     if (!hasEmpty) return;
@@ -2344,10 +2413,8 @@ function handleLabelClick(isRow, index) {
         const r = Math.floor(idx / SIZE), c = idx % SIZE;
 
         if (merged[idx] === 0 && !isFixedPath(r, c)) {
-            // Check if locked by lower layer
-            let locked = false;
-            for (let j = 0; j < currentIdx; j++) if (layers[j][idx] !== 0) locked = true;
-            if (!locked) {
+            // Check if locked by lower layer or generator
+            if (!isCellLocked(idx)) {
                 layers[currentIdx][idx] = fillType;
             }
         }
@@ -2504,6 +2571,381 @@ function isValidAlternateSolution(merged) {
     return true;
 }
 
+function findLockedWallsForAmbiguousSolutions() {
+    const locked = Array(SIZE * SIZE).fill(false);
+    const merged = Array(SIZE * SIZE).fill(0);
+    const solverGuard = {
+        steps: 0,
+        maxSteps: 8000,
+        maxDepth: 24
+    };
+
+    function guardExceeded() {
+        solverGuard.steps++;
+        return solverGuard.steps > solverGuard.maxSteps;
+    }
+
+    function isSolved(mergedBoard) {
+        return isValidAlternateSolution(mergedBoard);
+    }
+
+    function hasContradiction(mergedBoard) {
+        // 1. Invalid dead end (path boxed in by 3+ walls that isn't a dead end node)
+        if (findInvalidDeadEnd(mergedBoard)) return true;
+
+        // 2. Row/column over limit
+        for (let r = 0; r < SIZE; r++) {
+            const { walls, paths, target, expectedPaths } = getRowCounts(mergedBoard, r);
+            if (walls > target || paths > expectedPaths) return true;
+        }
+        for (let c = 0; c < SIZE; c++) {
+            const { walls, paths, target, expectedPaths } = getColCounts(mergedBoard, c);
+            if (walls > target || paths > expectedPaths) return true;
+        }
+
+        // 3. 2x2 path block (outside vault)
+        for (let r = 0; r < SIZE - 1; r++) {
+            for (let c = 0; c < SIZE - 1; c++) {
+                let allPaths = true;
+                let nearStockpile = false;
+                for (const [dr, dc] of [[0, 0], [0, 1], [1, 0], [1, 1]]) {
+                    const cr = r + dr, cc = c + dc;
+                    const idx = cr * SIZE + cc;
+                    if (mergedBoard[idx] !== 2 && !isFixedPath(cr, cc)) allPaths = false;
+                    if (stockpilePos && Math.abs(cr - stockpilePos.r) <= 1 && Math.abs(cc - stockpilePos.c) <= 1) {
+                        nearStockpile = true;
+                    }
+                }
+                if (allPaths && !nearStockpile) return true;
+            }
+        }
+
+        // 4. Dead end with multiple paths
+        for (let r = 0; r < SIZE; r++) {
+            for (let c = 0; c < SIZE; c++) {
+                if (!isTargetDeadEnd(r, c)) continue;
+                let pathCount = 0;
+                for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nr = r + dr, nc = c + dc;
+                    if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) continue;
+                    const nIdx = nr * SIZE + nc;
+                    if (mergedBoard[nIdx] === 2 || isFixedPath(nr, nc)) pathCount++;
+                }
+                if (pathCount > 1) return true;
+            }
+        }
+
+        // 5. Cut-off section of the grid (walls separating regions so paths can't connect)
+        const nonWallCells = [];
+        for (let i = 0; i < SIZE * SIZE; i++) {
+            if (mergedBoard[i] !== 1) nonWallCells.push(i);
+        }
+        if (nonWallCells.length > 1) {
+            const visited = new Set();
+            const stack = [nonWallCells[0]];
+            visited.add(nonWallCells[0]);
+
+            while (stack.length > 0) {
+                const idx = stack.pop();
+                const r = Math.floor(idx / SIZE), c = idx % SIZE;
+                for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nr = r + dr, nc = c + dc;
+                    if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE) {
+                        const nIdx = nr * SIZE + nc;
+                        if (!visited.has(nIdx) && mergedBoard[nIdx] !== 1) {
+                            visited.add(nIdx);
+                            stack.push(nIdx);
+                        }
+                    }
+                }
+            }
+
+            if (visited.size < nonWallCells.length) return true;
+        }
+
+        return false;
+    }
+
+    function getDeterministicHint(mergedBoard) {
+        const hintFunctions = [
+            { name: 'hintTrivialRowCol', fn: () => hintTrivialRowCol(mergedBoard) },
+            { name: 'hintDeadEndCanBeFinished', fn: () => hintDeadEndCanBeFinished(mergedBoard) },
+            { name: 'hint2x2With3Paths', fn: () => hint2x2With3Paths(mergedBoard) },
+            { name: 'hintVaultPerimeterComplete', fn: () => hintVaultPerimeterComplete(mergedBoard) },
+            { name: 'hintPathMustExtend', fn: () => hintPathMustExtend(mergedBoard) },
+            { name: 'hintRowColComplete', fn: () => hintRowColComplete(mergedBoard) },
+            { name: 'hintEmptyDeadEndMustBeWall', fn: () => hintEmptyDeadEndMustBeWall(mergedBoard, null) },
+            { name: 'hintVaultInteriorMustBePath', fn: () => hintVaultInteriorMustBePath(mergedBoard) },
+            { name: 'hintVaultExitDeadEnd', fn: () => hintVaultExitDeadEnd(mergedBoard) },
+            { name: 'hintDeadEndAdjacent', fn: () => hintDeadEndAdjacent(mergedBoard) },
+            { name: 'hintCornerFlankingDeadEnds', fn: () => hintCornerFlankingDeadEnds(mergedBoard) },
+            { name: 'hintDeadEndOr2x2Squeeze', fn: () => hintDeadEndOr2x2Squeeze(mergedBoard) },
+            { name: 'hintEdgeDeadEndOneWall', fn: () => hintEdgeDeadEndOneWall(mergedBoard) },
+            { name: 'hintEdgeCornerDeadEnd', fn: () => hintEdgeCornerDeadEnd(mergedBoard) },
+            { name: 'hintCacheNearEdge', fn: () => hintCacheNearEdge(mergedBoard) },
+            { name: 'hintRowColCompletionCausesError', fn: () => hintRowColCompletionCausesError(mergedBoard) }
+        ];
+
+        for (const { name, fn } of hintFunctions) {
+            const hint = fn();
+            if (hint && hint.cells && hint.shouldBe) {
+                return hint;
+            }
+        }
+        return null;
+    }
+
+    function applyHint(mergedBoard, hint) {
+        const value = hint.shouldBe === 'wall' ? 1 : 2;
+        let changed = false;
+        for (const cell of hint.cells) {
+            const idx = cell.r * SIZE + cell.c;
+            if (mergedBoard[idx] === 0) {
+                mergedBoard[idx] = value;
+                changed = true;
+            } else if (mergedBoard[idx] !== value) {
+                return { conflict: true, changed: false };
+            }
+        }
+        return { conflict: false, changed };
+    }
+
+    function findVaultExitCandidates() {
+        if (!stockpilePos) return [];
+        for (let roomR = Math.max(0, stockpilePos.r - 2); roomR <= Math.min(stockpilePos.r, SIZE - 3); roomR++) {
+            for (let roomC = Math.max(0, stockpilePos.c - 2); roomC <= Math.min(stockpilePos.c, SIZE - 3); roomC++) {
+                if (stockpilePos.r < roomR || stockpilePos.r > roomR + 2 ||
+                    stockpilePos.c < roomC || stockpilePos.c > roomC + 2) continue;
+
+                let interiorClear = true;
+                for (let dr = 0; dr < 3 && interiorClear; dr++) {
+                    for (let dc = 0; dc < 3 && interiorClear; dc++) {
+                        if (solution[roomR + dr][roomC + dc] === 1) interiorClear = false;
+                    }
+                }
+                if (!interiorClear) continue;
+
+                let doorCells = [];
+                let wallCount = 0;
+                for (let dc = 0; dc < 3; dc++) {
+                    if (roomR === 0) {
+                        wallCount++;
+                    } else if (solution[roomR - 1][roomC + dc] === 1) {
+                        wallCount++;
+                    } else {
+                        doorCells.push((roomR - 1) * SIZE + (roomC + dc));
+                    }
+
+                    if (roomR + 2 === SIZE - 1) {
+                        wallCount++;
+                    } else if (solution[roomR + 3][roomC + dc] === 1) {
+                        wallCount++;
+                    } else {
+                        doorCells.push((roomR + 3) * SIZE + (roomC + dc));
+                    }
+                }
+                for (let dr = 0; dr < 3; dr++) {
+                    if (roomC === 0) {
+                        wallCount++;
+                    } else if (solution[roomR + dr][roomC - 1] === 1) {
+                        wallCount++;
+                    } else {
+                        doorCells.push((roomR + dr) * SIZE + (roomC - 1));
+                    }
+
+                    if (roomC + 2 === SIZE - 1) {
+                        wallCount++;
+                    } else if (solution[roomR + dr][roomC + 3] === 1) {
+                        wallCount++;
+                    } else {
+                        doorCells.push((roomR + dr) * SIZE + (roomC + 3));
+                    }
+                }
+
+                if (wallCount === 11) return doorCells;
+            }
+        }
+        return [];
+    }
+
+    function chooseForkCell(mergedBoard) {
+        // Priority 1: path out of dead end
+        for (let r = 0; r < SIZE; r++) {
+            for (let c = 0; c < SIZE; c++) {
+                if (!isTargetDeadEnd(r, c)) continue;
+                for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nr = r + dr, nc = c + dc;
+                    if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) continue;
+                    if (isFixedPath(nr, nc)) continue;
+                    const nIdx = nr * SIZE + nc;
+                    if (mergedBoard[nIdx] === 0) return nIdx;
+                }
+            }
+        }
+
+        // Priority 2: row/col needs one more path
+        for (let r = 0; r < SIZE; r++) {
+            const { walls, paths, target } = getRowCounts(mergedBoard, r);
+            const expectedPaths = SIZE - target;
+            if (expectedPaths - paths === 1) {
+                for (let c = 0; c < SIZE; c++) {
+                    const idx = r * SIZE + c;
+                    if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+                }
+            }
+        }
+        for (let c = 0; c < SIZE; c++) {
+            const { walls, paths, target } = getColCounts(mergedBoard, c);
+            const expectedPaths = SIZE - target;
+            if (expectedPaths - paths === 1) {
+                for (let r = 0; r < SIZE; r++) {
+                    const idx = r * SIZE + c;
+                    if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+                }
+            }
+        }
+
+        // Priority 3: row/col needs one more wall
+        for (let r = 0; r < SIZE; r++) {
+            const { walls, target } = getRowCounts(mergedBoard, r);
+            if (target - walls === 1) {
+                for (let c = 0; c < SIZE; c++) {
+                    const idx = r * SIZE + c;
+                    if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+                }
+            }
+        }
+        for (let c = 0; c < SIZE; c++) {
+            const { walls, target } = getColCounts(mergedBoard, c);
+            if (target - walls === 1) {
+                for (let r = 0; r < SIZE; r++) {
+                    const idx = r * SIZE + c;
+                    if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+                }
+            }
+        }
+
+        // Priority 4: path out of a vault (door cell)
+        const vaultExitCandidates = findVaultExitCandidates();
+        for (const idx of vaultExitCandidates) {
+            const r = Math.floor(idx / SIZE);
+            const c = idx % SIZE;
+            if (mergedBoard[idx] === 0 && !isFixedPath(r, c)) return idx;
+        }
+
+        // Fallback: first empty cell
+        for (let i = 0; i < SIZE * SIZE; i++) {
+            const r = Math.floor(i / SIZE), c = i % SIZE;
+            if (mergedBoard[i] === 0 && !isFixedPath(r, c)) return i;
+        }
+
+        return null;
+    }
+
+    function copyMerged(target, source) {
+        for (let i = 0; i < target.length; i++) {
+            target[i] = source[i];
+        }
+    }
+
+    function solveWithHints(mergedBoard) {
+        while (true) {
+            if (guardExceeded())
+                return { status: 'stuck' };
+            if (hasContradiction(mergedBoard))
+                return { status: 'conflict' };
+            if (isSolved(mergedBoard))
+                return { status: 'solved' };
+
+            const hint = getDeterministicHint(mergedBoard);
+            if (!hint) return { status: 'stuck' };
+            const result = applyHint(mergedBoard, hint);
+            if (result.conflict) return { status: 'conflict' };
+            if (!result.changed) return { status: 'stuck' };
+        }
+    }
+
+    function solveWithForks(mergedBoard, depth = 0) {
+        if (depth > solverGuard.maxDepth) return { status: 'stuck', board: mergedBoard };
+
+        while (true) {
+            const hintResult = solveWithHints(mergedBoard);
+            if (hintResult.status !== 'stuck') {
+                return { status: hintResult.status, board: mergedBoard };
+            }
+
+            const decisionIdx = chooseForkCell(mergedBoard);
+            if (decisionIdx === null) return { status: 'stuck', board: mergedBoard };
+
+            const wallBranch = mergedBoard.slice();
+            wallBranch[decisionIdx] = 1;
+            const pathBranch = mergedBoard.slice();
+            pathBranch[decisionIdx] = 2;
+
+            const wallResult = solveWithForks(wallBranch, depth + 1);
+            const pathResult = solveWithForks(pathBranch, depth + 1);
+
+            if (wallResult.status === 'conflict' && pathResult.status === 'conflict') {
+                return { status: 'conflict', board: mergedBoard };
+            }
+
+            if (wallResult.status === 'solved' && pathResult.status === 'solved') {
+                const newLocks = [];
+                for (let i = 0; i < SIZE * SIZE; i++) {
+                    if (wallResult.board[i] === pathResult.board[i]) continue;
+                    const r = Math.floor(i / SIZE);
+                    const c = i % SIZE;
+                    if (solution[r][c] === 1) {
+                        if (!locked[i]) newLocks.push(i);
+                    }
+                }
+
+                if (newLocks.length === 0) {
+                    return { status: 'solved', board: mergedBoard };
+                }
+
+                let bestIdx = newLocks[0];
+                let bestScore = -Infinity;
+                for (const idx of newLocks) {
+                    const r = Math.floor(idx / SIZE);
+                    const c = idx % SIZE;
+                    const rowCounts = getRowCounts(mergedBoard, r);
+                    const colCounts = getColCounts(mergedBoard, c);
+                    const remainingRowWalls = rowCounts.target - rowCounts.walls;
+                    const remainingColWalls = colCounts.target - colCounts.walls;
+                    const score = remainingRowWalls + remainingColWalls;
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestIdx = idx;
+                    }
+                }
+
+                locked[bestIdx] = true;
+                mergedBoard[bestIdx] = 1;
+                continue;
+            }
+
+            if (wallResult.status === 'conflict' && pathResult.status !== 'conflict') {
+                copyMerged(mergedBoard, pathResult.board);
+                continue;
+            }
+            if (pathResult.status === 'conflict' && wallResult.status !== 'conflict') {
+                copyMerged(mergedBoard, wallResult.board);
+                continue;
+            }
+
+            if (wallResult.status === 'solved' || pathResult.status === 'solved') {
+                return { status: 'solved', board: mergedBoard };
+            }
+
+            return { status: 'stuck', board: mergedBoard };
+        }
+    }
+
+    solveWithForks(merged);
+    return locked;
+}
+
 function getShortestPathBetween(merged, startIdx, endIdx) {
     let queue = [[startIdx]];
     let visited = new Set([startIdx]);
@@ -2531,8 +2973,7 @@ function update() {
     const cells = document.getElementById('mainGrid').querySelectorAll('.cell');
     const rl = document.getElementById('rowLabels').children;
     const cl = document.getElementById('colLabels').children;
-    const merged = Array(SIZE*SIZE).fill(0);
-    layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
+    const merged = getMergedBoard();
 
     // Check for win: either exact match OR valid alternate solution
     let allWallsCorrect = true;
@@ -2934,6 +3375,18 @@ function update() {
             cell.appendChild(keyOverlay);
         }
 
+        if (lockedWalls[i]) {
+            let lockedWall;
+            if (typeof ThemeManager !== 'undefined' && ThemeManager.current()?.renderWall) {
+                lockedWall = ThemeManager.render.wall(0, false, false);
+            } else {
+                lockedWall = document.createElement('div');
+                lockedWall.className = 'wall wall-l0';
+            }
+            lockedWall.classList.add('wall-locked');
+            cell.appendChild(lockedWall);
+        }
+
         layers.forEach((layer, lIdx) => {
             if (layer[i] === 1) {
                 const isError = rowTotals[r] > targets.r[r] || colTotals[c] > targets.c[c];
@@ -3056,8 +3509,7 @@ function triggerVictorySequence() {
     const cells = document.getElementById('mainGrid').querySelectorAll('.cell');
     const rl = document.getElementById('rowLabels').children;
     const cl = document.getElementById('colLabels').children;
-    const merged = Array(SIZE*SIZE).fill(0);
-    layers.forEach(l => l.forEach((s, i) => { if(s === 1) merged[i] = 1; if(s === 2 && merged[i] !== 1) merged[i] = 2; }));
+    const merged = getMergedBoard();
 
     // Quick render of walls and path dots
     for(let i=0; i<SIZE*SIZE; i++) {
@@ -3099,6 +3551,10 @@ function triggerVictorySequence() {
                     }
                 });
             }
+        }
+
+        if (lockedWalls[i]) {
+            cell.appendChild(Object.assign(document.createElement('div'), {className: 'wall wall-l0 wall-locked'}));
         }
 
         layers.forEach((layer, lIdx) => {
@@ -3309,6 +3765,11 @@ document.getElementById('addLayerBtn').onclick = () => {
         return;
     }
     if(currentIdx < 3) {
+        // Show Fork explanation on first use
+        if (!hasSeenForkExplanation) {
+            showForkExplanation();
+        }
+        
         ChipSound.fork();
         saveUndoState();
         layers.push(Array(SIZE*SIZE).fill(0));
@@ -3345,7 +3806,29 @@ document.getElementById('newMazeBtn').onclick = () => {
         ChipSound.error();
         return;
     }
-    confirmReset(() => init(true));
+    
+    // If puzzle is won, behave like "Initialize Next Sequence" (no confirmation, keep streak)
+    if (isWon) {
+        init(false);
+        return;
+    }
+    
+    confirmReset(() => {
+        // Starting a new puzzle should terminate any active tutorial (including hints-only).
+        if (isTutorialMode) {
+            // Close any tutorial dialogs that might be open, then clear tutorial state/UI locks.
+            const tutorialDialogs = [
+                document.getElementById('tutorialIntroDialog'),
+                document.getElementById('tutorialCompleteDialog'),
+                document.getElementById('userTutorialCompleteDialog'),
+            ];
+            tutorialDialogs.forEach(d => {
+                if (d && d.open) d.close();
+            });
+            endTutorial();
+        }
+        init(true);
+    });
 };
 document.getElementById('nextLevelBtn').onclick = () => init(false);
 document.getElementById('decryptToggleBtn').onclick = () => {
@@ -3367,6 +3850,170 @@ document.getElementById('decryptToggleBtn').onclick = () => {
 };
 
 // ============================================
+// HINT SYSTEM HELPER FUNCTIONS
+
+// Find empty cells in a row, optionally excluding cells adjacent to a given position
+function findEmptyCellsInRow(merged, r, excludeAdjacentTo = null) {
+    const emptyCells = [];
+    for (let c = 0; c < SIZE; c++) {
+        if (excludeAdjacentTo && Math.abs(c - excludeAdjacentTo.c) <= 1) continue;
+        const idx = r * SIZE + c;
+        if (merged[idx] === 0 && !isFixedPath(r, c)) {
+            emptyCells.push({ r, c });
+        }
+    }
+    return emptyCells;
+}
+
+// Find empty cells in a column, optionally excluding cells adjacent to a given position
+function findEmptyCellsInCol(merged, c, excludeAdjacentTo = null) {
+    const emptyCells = [];
+    for (let r = 0; r < SIZE; r++) {
+        if (excludeAdjacentTo && Math.abs(r - excludeAdjacentTo.r) <= 1) continue;
+        const idx = r * SIZE + c;
+        if (merged[idx] === 0 && !isFixedPath(r, c)) {
+            emptyCells.push({ r, c });
+        }
+    }
+    return emptyCells;
+}
+
+// Get perpendicular cells to a position (above/below for rows, left/right for columns)
+// Returns array of {r, c, isEmpty} objects for cells that can be checked
+function getPerpendicularCells(merged, r, c, direction) {
+    const cells = [];
+    if (direction === 'row') {
+        // For rows, perpendicular means above and below
+        if (r > 0) {
+            const idx = (r - 1) * SIZE + c;
+            cells.push({ r: r - 1, c, isEmpty: merged[idx] === 0 && !isFixedPath(r - 1, c) });
+        }
+        if (r < SIZE - 1) {
+            const idx = (r + 1) * SIZE + c;
+            cells.push({ r: r + 1, c, isEmpty: merged[idx] === 0 && !isFixedPath(r + 1, c) });
+        }
+    } else {
+        // For columns, perpendicular means left and right
+        if (c > 0) {
+            const idx = r * SIZE + (c - 1);
+            cells.push({ r, c: c - 1, isEmpty: merged[idx] === 0 && !isFixedPath(r, c - 1) });
+        }
+        if (c < SIZE - 1) {
+            const idx = r * SIZE + (c + 1);
+            cells.push({ r, c: c + 1, isEmpty: merged[idx] === 0 && !isFixedPath(r, c + 1) });
+        }
+    }
+    return cells;
+}
+
+// Create a hint object with standardized structure and forCell filtering
+function createHintObject(cells, shouldBe, message, highlight, forCell = null) {
+    if (!cells || cells.length === 0) return null;
+    
+    // If forCell is specified, check if any cell matches
+    if (forCell) {
+        const matches = cells.some(cell => cell.r === forCell.r && cell.c === forCell.c);
+        if (!matches) return null;
+    }
+    
+    return {
+        message,
+        highlight,
+        cells,
+        shouldBe
+    };
+}
+
+// Generic function to check a row or column for hints
+// isRow: true for rows, false for columns
+// index: row number or column number
+// checkFn: callback(counts, emptyCells, isRow, index) that returns hint object or null
+function checkRowColForHint(merged, isRow, index, checkFn, forCell = null) {
+    const counts = isRow ? getRowCounts(merged, index) : getColCounts(merged, index);
+    const emptyCells = isRow 
+        ? findEmptyCellsInRow(merged, index)
+        : findEmptyCellsInCol(merged, index);
+    
+    if (emptyCells.length === 0) return null;
+    
+    const hint = checkFn(counts, emptyCells, isRow, index);
+    if (!hint) return null;
+    
+    // Apply forCell filtering if specified
+    if (forCell) {
+        const matches = emptyCells.some(ec => ec.r === forCell.r && ec.c === forCell.c);
+        if (!matches) return null;
+    }
+    
+    return hint;
+}
+
+// Count neighbors of a cell (walls, paths, empty cells)
+// Returns { wallCount, pathCount, emptyCount, emptyCells, wallCells, pathCells }
+// emptyCells, wallCells, pathCells are arrays of {r, c} objects
+function countNeighbors(merged, r, c, treatEdgesAsWalls = true) {
+    let wallCount = 0;
+    let pathCount = 0;
+    let emptyCount = 0;
+    const emptyCells = [];
+    const wallCells = [];
+    const pathCells = [];
+
+    for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+        const nr = r + dr, nc = c + dc;
+        if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) {
+            if (treatEdgesAsWalls) {
+                wallCount++;
+            }
+            continue;
+        }
+        const nIdx = nr * SIZE + nc;
+        if (merged[nIdx] === 1) {
+            wallCount++;
+            wallCells.push({ r: nr, c: nc });
+        } else if (merged[nIdx] === 2 || isFixedPath(nr, nc)) {
+            pathCount++;
+            pathCells.push({ r: nr, c: nc });
+        } else {
+            emptyCount++;
+            emptyCells.push({ r: nr, c: nc });
+        }
+    }
+
+    return { wallCount, pathCount, emptyCount, emptyCells, wallCells, pathCells };
+}
+
+// Generic function to iterate all cells and collect hints with forCell support
+// checkFn: callback(merged, r, c) that returns hint object or null
+// Returns the first hint that matches forCell, or the best candidate if no forCell
+function iterateAllCellsForHint(merged, checkFn, forCell = null, bestSelector = null) {
+    const candidates = [];
+    
+    for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+            const hint = checkFn(merged, r, c);
+            if (!hint) continue;
+            
+            // If forCell is specified, check if hint includes that cell
+            if (forCell && hint.cells) {
+                const matches = hint.cells.some(cell => cell.r === forCell.r && cell.c === forCell.c);
+                if (matches) return hint;
+            }
+            
+            candidates.push(hint);
+        }
+    }
+    
+    if (forCell) return null;
+    if (candidates.length === 0) return null;
+    
+    // Use bestSelector if provided, otherwise return first
+    if (bestSelector) {
+        return candidates.reduce(bestSelector);
+    }
+    return candidates[0];
+}
+
 // HINT SYSTEM
 // ============================================
 
@@ -3385,9 +4032,20 @@ function cellRef(r, c) {
     return `${colToLetter(c)}${rowToNumber(r)}`;
 }
 
+// Check if a cell is locked (lower layer, plus generator lock when enabled)
+function isCellLocked(idx) {
+    if (LOCKED_WALLS_AFFECT_GAMEPLAY && lockedWalls[idx]) return true;
+    return layers.slice(0, currentIdx).some(l => l[idx] !== 0);
+}
+
 // Get merged board state (walls=1, paths=2, empty=0)
 function getMergedBoard() {
     const merged = Array(SIZE * SIZE).fill(0);
+    if (LOCKED_WALLS_AFFECT_GAMEPLAY) {
+        lockedWalls.forEach((locked, i) => {
+            if (locked) merged[i] = 1;
+        });
+    }
     layers.forEach(l => l.forEach((s, i) => {
         if (s === 1) merged[i] = 1;
         if (s === 2 && merged[i] !== 1) merged[i] = 2;
@@ -3664,70 +4322,46 @@ function hintCheckMistakes(merged, onlyObvious = false) {
 function hintTrivialRowCol(merged, forCell = null) {
     const candidates = [];
 
-    // Check rows for trivial cases (0 walls = all paths, SIZE walls = all walls)
-    for (let r = 0; r < SIZE; r++) {
-        const { walls, paths, target, expectedPaths } = getRowCounts(merged, r);
-        const emptyCells = [];
-        for (let c = 0; c < SIZE; c++) {
-            const idx = r * SIZE + c;
-            if (merged[idx] === 0 && !isFixedPath(r, c)) emptyCells.push({ r, c });
-        }
-        if (emptyCells.length === 0) continue;
+    // Check function for trivial cases
+    function checkTrivial(counts, emptyCells, isRow, index) {
+        const { walls, paths, target } = counts;
+        if (emptyCells.length === 0) return null;
 
-        let hint = null;
         // Only handle trivial cases: target is 0 or SIZE
         if (target === 0 && walls === 0) {
-            hint = {
-                message: `Row ${rowToNumber(r)} needs 0 walls, so all cells must be paths.`,
-                highlight: { type: 'row', index: r },
+            const lineName = isRow ? `Row ${rowToNumber(index)}` : `Column ${colToLetter(index)}`;
+            return {
+                message: `${lineName} needs 0 walls, so all cells must be paths.`,
+                highlight: isRow ? { type: 'row', index } : { type: 'col', index },
                 cells: emptyCells, shouldBe: 'path'
             };
         } else if (target === SIZE && paths === 0) {
-            hint = {
-                message: `Row ${rowToNumber(r)} needs ${SIZE} walls, so all cells must be walls.`,
-                highlight: { type: 'row', index: r },
+            const lineName = isRow ? `Row ${rowToNumber(index)}` : `Column ${colToLetter(index)}`;
+            return {
+                message: `${lineName} needs ${SIZE} walls, so all cells must be walls.`,
+                highlight: isRow ? { type: 'row', index } : { type: 'col', index },
                 cells: emptyCells, shouldBe: 'wall'
             };
         }
+        return null;
+        }
 
+    // Check rows
+    for (let r = 0; r < SIZE; r++) {
+        const hint = checkRowColForHint(merged, true, r, (counts, emptyCells) => 
+            checkTrivial(counts, emptyCells, true, r), forCell);
         if (hint) {
-            if (forCell && emptyCells.some(ec => ec.r === forCell.r && ec.c === forCell.c)) {
-                return hint;
-            }
+            if (forCell) return hint;
             candidates.push(hint);
         }
     }
 
-    // Check columns for trivial cases
+    // Check columns
     for (let c = 0; c < SIZE; c++) {
-        const { walls, paths, target, expectedPaths } = getColCounts(merged, c);
-        const emptyCells = [];
-        for (let r = 0; r < SIZE; r++) {
-            const idx = r * SIZE + c;
-            if (merged[idx] === 0 && !isFixedPath(r, c)) emptyCells.push({ r, c });
-        }
-        if (emptyCells.length === 0) continue;
-
-        let hint = null;
-        // Only handle trivial cases: target is 0 or SIZE
-        if (target === 0 && walls === 0) {
-            hint = {
-                message: `Column ${colToLetter(c)} needs 0 walls, so all cells must be paths.`,
-                highlight: { type: 'col', index: c },
-                cells: emptyCells, shouldBe: 'path'
-            };
-        } else if (target === SIZE && paths === 0) {
-            hint = {
-                message: `Column ${colToLetter(c)} needs ${SIZE} walls, so all cells must be walls.`,
-                highlight: { type: 'col', index: c },
-                cells: emptyCells, shouldBe: 'wall'
-            };
-        }
-
+        const hint = checkRowColForHint(merged, false, c, (counts, emptyCells) => 
+            checkTrivial(counts, emptyCells, false, c), forCell);
         if (hint) {
-            if (forCell && emptyCells.some(ec => ec.r === forCell.r && ec.c === forCell.c)) {
-                return hint;
-            }
+            if (forCell) return hint;
             candidates.push(hint);
         }
     }
@@ -3742,75 +4376,49 @@ function hintRowColComplete(merged, forCell = null) {
     // Collect all possible hints and return the one with the most cells
     const candidates = [];
 
-    // Check rows
-    for (let r = 0; r < SIZE; r++) {
-        const { walls, paths, target, expectedPaths } = getRowCounts(merged, r);
-        // Check if there are empty cells to fill
-        const emptyCells = [];
-        for (let c = 0; c < SIZE; c++) {
-            const idx = r * SIZE + c;
-            if (merged[idx] === 0 && !isFixedPath(r, c)) emptyCells.push({ r, c });
-        }
-        if (emptyCells.length === 0) continue;
-        
+    // Check function for completion cases
+    function checkComplete(counts, emptyCells, isRow, index) {
+        const { walls, paths, target, expectedPaths } = counts;
+        if (emptyCells.length === 0) return null;
 
+        const lineName = isRow ? `Row ${rowToNumber(index)}` : `Column ${colToLetter(index)}`;
         let hint = null;
+
         if (walls === target) {
             const pathMessage = emptyCells.length === 1 ? 'The remaining cell must be a path' : 'The remaining cells must all be paths';
             hint = {
-                message: `Row ${rowToNumber(r)} has all its walls. ${pathMessage}.`,
-                highlight: { type: 'row', index: r },
+                message: `${lineName} has all its walls. ${pathMessage}.`,
+                highlight: isRow ? { type: 'row', index } : { type: 'col', index },
                 cells: emptyCells, shouldBe: 'path'
             };
         } else if (paths === expectedPaths) {
             const wallMessage = emptyCells.length === 1 ? 'The remaining cell must be a wall' : 'The remaining cells must all be walls';
             hint = {
-                message: `Row ${rowToNumber(r)} has all its paths. ${wallMessage}.`,
-                highlight: { type: 'row', index: r },
+                message: `${lineName} has all its paths. ${wallMessage}.`,
+                highlight: isRow ? { type: 'row', index } : { type: 'col', index },
                 cells: emptyCells, shouldBe: 'wall'
             };
         }
 
-        if (hint) {
-            if (forCell && emptyCells.some(ec => ec.r === forCell.r && ec.c === forCell.c)) {
                 return hint;
             }
+
+    // Check rows
+    for (let r = 0; r < SIZE; r++) {
+        const hint = checkRowColForHint(merged, true, r, (counts, emptyCells) => 
+            checkComplete(counts, emptyCells, true, r), forCell);
+        if (hint) {
+            if (forCell) return hint;
             candidates.push(hint);
         }
     }
 
     // Check columns
     for (let c = 0; c < SIZE; c++) {
-        const { walls, paths, target, expectedPaths } = getColCounts(merged, c);
-        // Check if there are empty cells to fill
-        const emptyCells = [];
-        for (let r = 0; r < SIZE; r++) {
-            const idx = r * SIZE + c;
-            if (merged[idx] === 0 && !isFixedPath(r, c)) emptyCells.push({ r, c });
-        }
-        if (emptyCells.length === 0) continue;
-
-        let hint = null;
-        if (walls === target) {
-            const pathMessage = emptyCells.length === 1 ? 'The remaining cell must be a path' : 'The remaining cells must all be paths';
-            hint = {
-                message: `Column ${colToLetter(c)} has all its walls. ${pathMessage}.`,
-                highlight: { type: 'col', index: c },
-                cells: emptyCells, shouldBe: 'path'
-            };
-        } else if (paths === expectedPaths) {
-            const wallMessage = emptyCells.length === 1 ? 'The remaining cell must be a wall' : 'The remaining cells must all be walls';
-            hint = {
-                message: `Column ${colToLetter(c)} has all its paths. ${wallMessage}.`,
-                highlight: { type: 'col', index: c },
-                cells: emptyCells, shouldBe: 'wall'
-            };
-        }
-
+        const hint = checkRowColForHint(merged, false, c, (counts, emptyCells) => 
+            checkComplete(counts, emptyCells, false, c), forCell);
         if (hint) {
-            if (forCell && emptyCells.some(ec => ec.r === forCell.r && ec.c === forCell.c)) {
-                return hint;
-            }
+            if (forCell) return hint;
             candidates.push(hint);
         }
     }
@@ -3823,36 +4431,10 @@ function hintRowColComplete(merged, forCell = null) {
 
 // Hint 3: Dead end can be finished (has 1 path or 3 walls around it)
 function hintDeadEndCanBeFinished(merged, forCell = null) {
-    // Collect all possible hints and return the one with the most cells
-    const candidates = [];
+    function checkDeadEnd(merged, r, c) {
+        if (!isTargetDeadEnd(r, c)) return null;
 
-    for (let r = 0; r < SIZE; r++) {
-        for (let c = 0; c < SIZE; c++) {
-            if (!isTargetDeadEnd(r, c)) continue;
-
-            let pathCount = 0;
-            let wallCount = 0;
-            let emptyCount = 0;
-            const emptyCells = [];
-
-            for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-                const nr = r + dr, nc = c + dc;
-                if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) {
-                    wallCount++; // Edge of grid counts as wall
-                    continue;
-                }
-                const nIdx = nr * SIZE + nc;
-                if (merged[nIdx] === 1) {
-                    wallCount++;
-                } else if (merged[nIdx] === 2 || isFixedPath(nr, nc)) {
-                    pathCount++;
-                } else {
-                    emptyCount++;
-                    emptyCells.push({ r: nr, c: nc });
-                }
-            }
-
-            let hint = null;
+        const { pathCount, wallCount, emptyCount, emptyCells } = countNeighbors(merged, r, c);
 
             // Dead end has exactly 1 path - remaining empty neighbors must be walls
             if (pathCount === 1 && emptyCount > 0) {
@@ -3860,7 +4442,7 @@ function hintDeadEndCanBeFinished(merged, forCell = null) {
                 const cellWord = emptyCount === 1 ? 'Cell' : 'Cells';
                 const wallWord = emptyCount === 1 ? 'a wall' : 'walls';
                 const mustWord = emptyCount === 1 ? 'must' : emptyCount == 2 ? 'must both' : 'must all';
-                hint = {
+            return {
                     message: `${cellWord} ${cellList} ${mustWord} be ${wallWord} to complete the dead end at ${cellRef(r, c)}.`,
                     highlight: emptyCount === 1
                         ? { type: 'cell', r: emptyCells[0].r, c: emptyCells[0].c }
@@ -3872,26 +4454,18 @@ function hintDeadEndCanBeFinished(merged, forCell = null) {
             // Dead end has 3 walls - the remaining empty neighbor must be a path
             if (wallCount === 3 && emptyCount === 1 && pathCount === 0) {
                 const cell = emptyCells[0];
-                hint = {
+            return {
                     message: `Cell ${cellRef(cell.r, cell.c)} must be a path to complete the dead end at ${cellRef(r, c)}.`,
                     highlight: { type: 'cell', r: cell.r, c: cell.c },
                     cells: [cell], shouldBe: 'path'
                 };
             }
 
-            if (hint) {
-                if (forCell && emptyCells.some(ec => ec.r === forCell.r && ec.c === forCell.c)) {
-                    return hint;
-                }
-                candidates.push(hint);
-            }
-        }
+        return null;
     }
 
-    // Return the hint with the most cells
-    if (forCell) return null;
-    if (candidates.length === 0) return null;
-    return candidates.reduce((best, curr) => curr.cells.length > best.cells.length ? curr : best);
+    return iterateAllCellsForHint(merged, checkDeadEnd, forCell, 
+        (best, curr) => curr.cells.length > best.cells.length ? curr : best);
 }
 // Hint 4: Data cache vault constraints - some cells are guaranteed to be in the vault
 // Based on edges, walls, AND row/column wall requirements, we can determine which vault positions are valid
@@ -4211,6 +4785,259 @@ function hintVaultPerimeterComplete(merged) {
     return null;
 }
 
+// Hint: Vault exit cannot be adjacent to dead end in certain positions
+// A vault exit on the center of an edge cannot be adjacent to a dead end
+// A vault exit on a corner adjacent to a dead end cannot be on the grid edge
+function hintVaultExitDeadEnd(merged) {
+    if (!stockpilePos) return null;
+
+    const cacheR = stockpilePos.r;
+    const cacheC = stockpilePos.c;
+
+    // Find the vault position where all 9 interior cells are paths
+    // Check all possible 3x3 vault positions containing the stockpile
+    for (let vr = Math.max(0, cacheR - 2); vr <= Math.min(cacheR, SIZE - 3); vr++) {
+        for (let vc = Math.max(0, cacheC - 2); vc <= Math.min(cacheC, SIZE - 3); vc++) {
+            // Check if stockpile is in this vault
+            if (cacheR < vr || cacheR > vr + 2 || cacheC < vc || cacheC > vc + 2) continue;
+
+            // Check if all 9 interior cells are paths (vault is complete)
+            let vaultComplete = true;
+            for (let dr = 0; dr < 3 && vaultComplete; dr++) {
+                for (let dc = 0; dc < 3 && vaultComplete; dc++) {
+                    const cr = vr + dr, cc = vc + dc;
+                    const idx = cr * SIZE + cc;
+                    const isStockpileCell = cacheR === cr && cacheC === cc;
+                    // All cells must be paths (or stockpile/dead end which are fixed paths)
+                    if (merged[idx] !== 2 && !isTargetDeadEnd(cr, cc) && !isStockpileCell) {
+                        vaultComplete = false;
+                    }
+                }
+            }
+            if (!vaultComplete) continue;
+
+            // Check perimeter cells for potential exits (the 12 cells surrounding the vault)
+            const checkPerimeterExit = (pr, pc, isCorner, isEdgeCenter) => {
+                if (pr < 0 || pr >= SIZE || pc < 0 || pc >= SIZE) return null;
+                const pIdx = pr * SIZE + pc;
+                
+                // Only check empty cells (potential exits)
+                if (merged[pIdx] !== 0) return null;
+
+                // Verify this cell is directly adjacent to the vault (one of its 4 neighbors is in the vault)
+                let adjacentToVault = false;
+                for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nr = pr + dr, nc = pc + dc;
+                    if (nr >= vr && nr <= vr + 2 && nc >= vc && nc <= vc + 2) {
+                        // This neighbor is inside the vault - since vault is complete, it's a path
+                        adjacentToVault = true;
+                        break;
+                    }
+                }
+                if (!adjacentToVault) return null;
+
+                // Check if this perimeter cell is adjacent to a dead end
+                let adjacentToDeadEnd = false;
+                for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+                    const nr = pr + dr, nc = pc + dc;
+                    if (nr >= 0 && nr < SIZE && nc >= 0 && nc < SIZE && isTargetDeadEnd(nr, nc)) {
+                        adjacentToDeadEnd = true;
+                        break;
+                    }
+                }
+
+                if (!adjacentToDeadEnd) return null;
+
+                // Case 1: Center of edge adjacent to dead end - cannot be exit
+                if (isEdgeCenter) {
+                    return {
+                        message: `Cell ${cellRef(pr, pc)} cannot be the vault exit. It's next to a dead end that would cut off the vault from the rest of the grid.`,
+                        highlight: { type: 'cell', r: pr, c: pc },
+                        cells: [{ r: pr, c: pc }], shouldBe: 'wall'
+                    };
+                }
+
+                // Case 2: Corner adjacent to dead end on grid edge - cannot be exit
+                if (isCorner && (pr === 0 || pr === SIZE - 1 || pc === 0 || pc === SIZE - 1)) {
+                    return {
+                        message: `Cell ${cellRef(pr, pc)} cannot be the vault exit. It's next to a dead end that would cut off the vault from the rest of the grid.`,
+                        highlight: { type: 'cell', r: pr, c: pc },
+                        cells: [{ r: pr, c: pc }], shouldBe: 'wall'
+                    };
+                }
+
+                return null;
+            };
+
+            // Check top perimeter (row above vault)
+            if (vr > 0) {
+                // Left corner
+                const topLeftHint = checkPerimeterExit(vr - 1, vc, true, false);
+                if (topLeftHint) return topLeftHint;
+                // Center
+                const topCenterHint = checkPerimeterExit(vr - 1, vc + 1, false, true);
+                if (topCenterHint) return topCenterHint;
+                // Right corner
+                const topRightHint = checkPerimeterExit(vr - 1, vc + 2, true, false);
+                if (topRightHint) return topRightHint;
+            }
+
+            // Check bottom perimeter (row below vault)
+            if (vr + 3 < SIZE) {
+                // Left corner
+                const bottomLeftHint = checkPerimeterExit(vr + 3, vc, true, false);
+                if (bottomLeftHint) return bottomLeftHint;
+                // Center
+                const bottomCenterHint = checkPerimeterExit(vr + 3, vc + 1, false, true);
+                if (bottomCenterHint) return bottomCenterHint;
+                // Right corner
+                const bottomRightHint = checkPerimeterExit(vr + 3, vc + 2, true, false);
+                if (bottomRightHint) return bottomRightHint;
+            }
+
+            // Check left perimeter (column left of vault)
+            if (vc > 0) {
+                // Top corner
+                const leftTopHint = checkPerimeterExit(vr, vc - 1, true, false);
+                if (leftTopHint) return leftTopHint;
+                // Center
+                const leftCenterHint = checkPerimeterExit(vr + 1, vc - 1, false, true);
+                if (leftCenterHint) return leftCenterHint;
+                // Bottom corner
+                const leftBottomHint = checkPerimeterExit(vr + 2, vc - 1, true, false);
+                if (leftBottomHint) return leftBottomHint;
+            }
+
+            // Check right perimeter (column right of vault)
+            if (vc + 3 < SIZE) {
+                // Top corner
+                const rightTopHint = checkPerimeterExit(vr, vc + 3, true, false);
+                if (rightTopHint) return rightTopHint;
+                // Center
+                const rightCenterHint = checkPerimeterExit(vr + 1, vc + 3, false, true);
+                if (rightCenterHint) return rightCenterHint;
+                // Bottom corner
+                const rightBottomHint = checkPerimeterExit(vr + 2, vc + 3, true, false);
+                if (rightBottomHint) return rightBottomHint;
+            }
+        }
+    }
+
+    return null;
+}
+
+// Hint: When only 4 empty cells remain and puzzle has two valid solutions, suggest one
+function hintTwoValidSolutions(merged, forCell = null) {
+    // Find all empty cells
+    const emptyCells = [];
+    for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+            const idx = r * SIZE + c;
+            if (merged[idx] === 0 && !isFixedPath(r, c)) {
+                emptyCells.push({ r, c });
+            }
+        }
+    }
+
+    // Only apply if exactly 4 empty cells
+    if (emptyCells.length !== 4) return null;
+
+    // If forCell is specified, check if it's one of the 4 empty cells
+    if (forCell) {
+        const isInEmptyCells = emptyCells.some(ec => ec.r === forCell.r && ec.c === forCell.c);
+        if (!isInEmptyCells) return null;
+    }
+
+    // Try all possible pairings: (0,1) & (2,3), (0,2) & (1,3), (0,3) & (1,2)
+    const pairings = [
+        [[0, 1], [2, 3]],
+        [[0, 2], [1, 3]],
+        [[0, 3], [1, 2]]
+    ];
+
+    const validSolutions = [];
+
+    for (const pairing of pairings) {
+        const [pair1, pair2] = pairing;
+        
+        // Try making pair1 walls and pair2 paths
+        const testBoard1 = [...merged];
+        for (const idx of pair1) {
+            testBoard1[emptyCells[idx].r * SIZE + emptyCells[idx].c] = 1; // wall
+        }
+        for (const idx of pair2) {
+            testBoard1[emptyCells[idx].r * SIZE + emptyCells[idx].c] = 2; // path
+        }
+        if (isValidAlternateSolution(testBoard1)) {
+            validSolutions.push({
+                walls: pair1.map(idx => emptyCells[idx]),
+                paths: pair2.map(idx => emptyCells[idx])
+            });
+        }
+
+        // Try making pair1 paths and pair2 walls
+        const testBoard2 = [...merged];
+        for (const idx of pair1) {
+            testBoard2[emptyCells[idx].r * SIZE + emptyCells[idx].c] = 2; // path
+        }
+        for (const idx of pair2) {
+            testBoard2[emptyCells[idx].r * SIZE + emptyCells[idx].c] = 1; // wall
+        }
+        if (isValidAlternateSolution(testBoard2)) {
+            validSolutions.push({
+                walls: pair2.map(idx => emptyCells[idx]),
+                paths: pair1.map(idx => emptyCells[idx])
+            });
+        }
+    }
+
+    // Only hint if exactly 2 solutions found
+    if (validSolutions.length !== 2) return null;
+
+    // Check which solution matches the canonical solution
+    let matchingSolution = null;
+    for (const sol of validSolutions) {
+        let matches = true;
+        for (const cell of sol.walls) {
+            if (solution[cell.r][cell.c] !== 1) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) {
+            // Also verify the paths match
+            for (const cell of sol.paths) {
+                if (solution[cell.r][cell.c] !== 0) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches) {
+                matchingSolution = sol;
+                break;
+            }
+        }
+    }
+
+    // If no solution matches exactly, pick the first one (both are valid)
+    const solutionToSuggest = matchingSolution || validSolutions[0];
+    const cellList = formatCellList(solutionToSuggest.walls);
+    const cellWord = solutionToSuggest.walls.length === 1 ? 'Cell' : 'Cells';
+
+    return {
+        message: `Two solutions are valid. Try making ${cellWord} ${cellList} ${solutionToSuggest.walls.length === 1 ? 'a wall' : 'walls'}.`,
+        highlight: solutionToSuggest.walls.length === 1
+            ? { type: 'cell', r: solutionToSuggest.walls[0].r, c: solutionToSuggest.walls[0].c }
+            : { type: 'cells', cells: solutionToSuggest.walls },
+        // Include all 4 empty cells so clicking any of them will show the hint
+        // But only the suggested cells (in highlight) should be validated
+        cells: emptyCells,
+        shouldBe: 'wall',
+        // Mark that validation should only check highlighted cells, not all cells
+        validateOnlyHighlighted: true
+    };
+}
+
 // Hint: If placing a wall/path would complete a row/column and cause an obvious error, cell must be opposite
 // Errors checked: 2x2 path block (outside vault), invalid dead end, dead end with multiple exits, disconnected paths
 function hintRowColCompletionCausesError(merged) {
@@ -4357,7 +5184,7 @@ function hintRowColCompletionCausesError(merged) {
             if (merged[idx] !== 0 || isFixedPath(r, c)) continue;
 
             // Check if locked by lower layer
-            const isLocked = layers.slice(0, currentIdx).some(l => l[idx] !== 0);
+            const isLocked = isCellLocked(idx);
             if (isLocked) continue;
 
             // Try placing a wall here
@@ -4470,37 +5297,39 @@ function hintRowColCompletionCausesError(merged) {
 
 // Hint: Empty cell surrounded by 3+ walls must be a wall
 // An empty cell with 3+ walls around it cannot be a path (would be an invalid dead end)
-function hintEmptyDeadEndMustBeWall(merged) {
-    for (let r = 0; r < SIZE; r++) {
-        for (let c = 0; c < SIZE; c++) {
-            const idx = r * SIZE + c;
-            // Only check empty cells
-            if (merged[idx] !== 0 || isFixedPath(r, c)) continue;
-            // Skip if it's a target dead end (those are valid path locations)
-            if (isTargetDeadEnd(r, c)) continue;
+function hintEmptyDeadEndMustBeWall(merged, forCell = null) {
+    function checkCell(merged, r, c) {
+        const idx = r * SIZE + c;
+        // Check both empty cells and path cells
+        const isPath = merged[idx] === 2 || isFixedPath(r, c);
+        const isEmpty = merged[idx] === 0 && !isFixedPath(r, c);
+        
+        if (!isEmpty && !isPath) return null;
+        
+        // Skip if it's a target dead end (those are valid path locations)
+        if (isTargetDeadEnd(r, c)) return null;
 
-            // Count walls around this empty cell
-            let wallCount = 0;
-            for (const [dr, dc] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
-                const nr = r + dr, nc = c + dc;
-                if (nr < 0 || nr >= SIZE || nc < 0 || nc >= SIZE) {
-                    wallCount++; // Edge counts as wall
-                } else if (merged[nr * SIZE + nc] === 1) {
-                    wallCount++;
-                }
-            }
+        const { wallCount } = countNeighbors(merged, r, c);
 
-            // If 3+ walls, this cell must be a wall (can't be a path - would be invalid dead end)
-            if (wallCount >= 3) {
-                return {
-                    message: `Cell ${cellRef(r, c)} must be a wall. A path there would be a dead end with no exit.`,
-                    highlight: { type: 'cell', r, c },
-                    cells: [{ r, c }], shouldBe: 'wall'
-                };
-            }
+        // If exactly 3 walls (or 3+ for empty cells), this cell must be a wall
+        // For empty cells: 3+ walls means it would be an invalid dead end
+        // For path cells: exactly 3 walls means it IS an invalid dead end
+        if ((isEmpty && wallCount >= 3) || (isPath && wallCount === 3)) {
+            const message = isPath
+                ? `Cell ${cellRef(r, c)} is a path with 3 walls around it, making it a dead end. Since it's not a target dead end node, this is invalid. The cell must be a wall.`
+                : `Cell ${cellRef(r, c)} must be a wall. A path there would be a dead end with no exit.`;
+            
+            return {
+                message,
+                highlight: { type: 'cell', r, c },
+                cells: [{ r, c }], shouldBe: 'wall'
+            };
         }
+
+        return null;
     }
-    return null;
+
+    return iterateAllCellsForHint(merged, checkCell, forCell);
 }
 
 // Hint 5: 2x2 area with 3 paths
@@ -4694,8 +5523,9 @@ function hintDeadEndOr2x2Squeeze(merged) {
 // Hint 4: Path flanked by walls must be extended
 // E.g., __WPW___ means the cell below P must be a path (otherwise P would be a dead end)
 function hintPathMustExtend(merged, forCell = null) {
-    // Helper to analyze a cell's neighbors
+    // Helper to analyze a cell's neighbors (using countNeighbors but with custom board)
     function analyzeCell(r, c, testBoard) {
+        // countNeighbors uses merged, so we need a custom version for test boards
         let wallCount = 0, emptyCount = 0, pathCount = 0;
         const emptyCells = [];
 
@@ -4804,14 +5634,10 @@ function hintPathMustExtend(merged, forCell = null) {
 // Hint 5: Corner with two flanking dead ends must be a wall
 // E.g., if A2 and B1 are dead ends, A1 must be a wall (a path there would be cut off)
 function hintCornerFlankingDeadEnds(merged) {
-    // Check all cells for "corner" patterns where two perpendicular directions
-    // are blocked (by walls or grid edges) and the other two have dead ends
-    for (let r = 0; r < SIZE; r++) {
-        for (let c = 0; c < SIZE; c++) {
+    function checkCorner(merged, r, c) {
             const idx = r * SIZE + c;
-
             // Only check empty cells
-            if (merged[idx] !== 0 || isFixedPath(r, c)) continue;
+        if (merged[idx] !== 0 || isFixedPath(r, c)) return null;
 
             // Check each orthogonal direction
             const dirs = [
@@ -4841,7 +5667,7 @@ function hintCornerFlankingDeadEnds(merged) {
             }
 
             // Need exactly 2 blocked directions and 2 dead end directions
-            if (blocked.length !== 2 || deadEnds.length !== 2) continue;
+        if (blocked.length !== 2 || deadEnds.length !== 2) return null;
 
             // Check if blocked directions are perpendicular (not opposite)
             // Perpendicular means one is vertical (dr !== 0) and one is horizontal (dc !== 0)
@@ -4856,9 +5682,11 @@ function hintCornerFlankingDeadEnds(merged) {
                     cells: [{ r, c }], shouldBe: 'wall'
                 };
             }
-        }
-    }
+
     return null;
+    }
+
+    return iterateAllCellsForHint(merged, checkCorner);
 }
 
 // Hint 5: Edge row/column with exactly 1 wall remaining - corners must have path next to them
@@ -4989,50 +5817,165 @@ function hintEdgeCornerDeadEnd(merged) {
 
 // Hint 5: Row/column needs N-1 walls, cells next to dead ends must be walls
 function hintDeadEndAdjacent(merged) {
-    // Check rows that need N-1 walls
-    for (let r = 0; r < SIZE; r++) {
-        const { walls, target } = getRowCounts(merged, r);
-        if (target === SIZE - 1) {
-            // Check adjacent rows for dead ends
-            for (const adjR of [r - 1, r + 1]) {
-                if (adjR < 0 || adjR >= SIZE) continue;
-                for (let c = 0; c < SIZE; c++) {
-                    if (isTargetDeadEnd(adjR, c)) {
-                        const idx = r * SIZE + c;
+    // Helper to check a line (row or column) for dead end adjacent hints
+    function checkLineForDeadEndAdjacent(merged, isRow, index) {
+        const counts = isRow ? getRowCounts(merged, index) : getColCounts(merged, index);
+        if (counts.target !== SIZE - 1) return null;
+
+        // Check adjacent lines for dead ends
+        const adjIndices = isRow ? [index - 1, index + 1] : [index - 1, index + 1];
+        
+        for (const adjIndex of adjIndices) {
+            if (adjIndex < 0 || adjIndex >= SIZE) continue;
+            
+            // Iterate through cells in the line
+            for (let i = 0; i < SIZE; i++) {
+                const deadEndR = isRow ? adjIndex : i;
+                const deadEndC = isRow ? i : adjIndex;
+                
+                if (isTargetDeadEnd(deadEndR, deadEndC)) {
+                    const cellR = isRow ? index : i;
+                    const cellC = isRow ? i : index;
+                    const idx = cellR * SIZE + cellC;
+                    
                         if (merged[idx] === 0) {
+                        const lineName = isRow ? `row ${rowToNumber(index)}` : `column ${colToLetter(index)}`;
                             return {
-                                message: `Cell ${cellRef(r, c)} must be a wall. It's adjacent to a dead end, and row ${rowToNumber(r)} needs ${SIZE - 1} walls.`,
-                                highlight: { type: 'cell', r, c },
-                                cells: [{ r, c }], shouldBe: 'wall'
+                            message: `Cell ${cellRef(cellR, cellC)} must be a wall. It's adjacent to a dead end, and ${lineName} needs ${SIZE - 1} walls.`,
+                            highlight: { type: 'cell', r: cellR, c: cellC },
+                            cells: [{ r: cellR, c: cellC }], shouldBe: 'wall'
                             };
                         }
                     }
                 }
             }
+        
+        return null;
         }
+
+    // Check rows
+    for (let r = 0; r < SIZE; r++) {
+        const hint = checkLineForDeadEndAdjacent(merged, true, r);
+        if (hint) return hint;
     }
 
-    // Check columns that need N-1 walls
+    // Check columns
     for (let c = 0; c < SIZE; c++) {
-        const { walls, target } = getColCounts(merged, c);
-        if (target === SIZE - 1) {
-            for (const adjC of [c - 1, c + 1]) {
-                if (adjC < 0 || adjC >= SIZE) continue;
-                for (let r = 0; r < SIZE; r++) {
-                    if (isTargetDeadEnd(r, adjC)) {
-                        const idx = r * SIZE + c;
-                        if (merged[idx] === 0) {
+        const hint = checkLineForDeadEndAdjacent(merged, false, c);
+        if (hint) return hint;
+    }
+
+    return null;
+}
+
+// Helper function to check a dead end one wall case
+// Returns path hint or wall hint as appropriate
+function checkDeadEndOneWallCase(merged, r, c, isRow, isEdge, remainingWalls, neighborState) {
+    // neighborState contains: leftIsWall, rightIsWall, aboveIsWall, belowIsWall,
+    // leftIsEmpty, rightIsEmpty, aboveIsEmpty, belowIsEmpty
+    const { leftIsWall, rightIsWall, aboveIsWall, belowIsWall,
+            leftIsEmpty, rightIsEmpty, aboveIsEmpty, belowIsEmpty } = neighborState;
+    
+    // Count existing walls around dead end
+    const existingWalls = (leftIsWall ? 1 : 0) + (rightIsWall ? 1 : 0) + 
+                          (aboveIsWall ? 1 : 0) + (belowIsWall ? 1 : 0);
+    const wallsStillNeeded = 3 - existingWalls;
+    
+    if (wallsStillNeeded <= 0) return null; // Dead end already satisfied
+    
+    // For edge cases, we know remainingWalls === 1
+    // For interior cases, we need to calculate if the dead end must get the wall
+    let wallsNeededFromLine = 0;
+    let potentialLineWalls = 0;
+    let potentialOutsideWalls = 0;
+    let maxWallsFromLine = 0;
+    
+    if (isEdge) {
+        // Edge case: remainingWalls is always 1, and dead end must get it
+        wallsNeededFromLine = 1;
+    } else {
+        // Interior case: calculate if dead end must get wall from the line
+        if (isRow) {
+            potentialLineWalls = (leftIsEmpty ? 1 : 0) + (rightIsEmpty ? 1 : 0);
+            potentialOutsideWalls = (aboveIsEmpty ? 1 : 0) + (belowIsEmpty ? 1 : 0);
+        } else {
+            potentialLineWalls = (aboveIsEmpty ? 1 : 0) + (belowIsEmpty ? 1 : 0);
+            potentialOutsideWalls = (leftIsEmpty ? 1 : 0) + (rightIsEmpty ? 1 : 0);
+        }
+        maxWallsFromLine = Math.min(remainingWalls, potentialLineWalls);
+        wallsNeededFromLine = Math.max(0, wallsStillNeeded - potentialOutsideWalls);
+    }
+    
+    // Only proceed if line needs exactly 1 wall AND dead end must get that wall
+    if (remainingWalls !== 1 || wallsNeededFromLine < 1) {
+        // Check for the other case: need 2+ walls from outside (only for interior cases)
+        if (!isEdge) {
+            // Calculate maxWallsFromLine if not already done
+            if (maxWallsFromLine === 0) {
+                if (isRow) {
+                    potentialLineWalls = (leftIsEmpty ? 1 : 0) + (rightIsEmpty ? 1 : 0);
+                    potentialOutsideWalls = (aboveIsEmpty ? 1 : 0) + (belowIsEmpty ? 1 : 0);
+                } else {
+                    potentialLineWalls = (aboveIsEmpty ? 1 : 0) + (belowIsEmpty ? 1 : 0);
+                    potentialOutsideWalls = (leftIsEmpty ? 1 : 0) + (rightIsEmpty ? 1 : 0);
+                }
+                maxWallsFromLine = Math.min(remainingWalls, potentialLineWalls);
+            }
+            if (wallsStillNeeded - maxWallsFromLine >= 2) {
+            const wallCells = [];
+            if (isRow) {
+                if (aboveIsEmpty) wallCells.push({ r: r - 1, c });
+                if (belowIsEmpty) wallCells.push({ r: r + 1, c });
+            } else {
+                if (leftIsEmpty) wallCells.push({ r, c: c - 1 });
+                if (rightIsEmpty) wallCells.push({ r, c: c + 1 });
+            }
+            
+            if (wallCells.length > 0) {
+                const cellsText = wallCells.length === 1 ? `Cell ${formatCellList(wallCells)} must be a wall` : `Cells ${formatCellList(wallCells)} must be walls`;
+                const lineName = isRow ? `row ${rowToNumber(r)}` : `column ${colToLetter(c)}`;
+                const perpName = isRow ? 'above and below' : 'left and right';
                             return {
-                                message: `Cell ${cellRef(r, c)} must be a wall. It's adjacent to a dead end, and column ${colToLetter(c)} needs ${SIZE - 1} walls.`,
-                                highlight: { type: 'cell', r, c },
-                                cells: [{ r, c }], shouldBe: 'wall'
+                    message: `${cellsText}. The dead end at ${cellRef(r, c)} needs ${wallsStillNeeded} more wall${wallsStillNeeded > 1 ? 's' : ''}, but ${lineName} can only provide ${maxWallsFromLine}, so the cells ${perpName} must be walls.`,
+                    highlight: wallCells.length === 1 ? { type: 'cell', r: wallCells[0].r, c: wallCells[0].c } : { type: 'cells', cells: wallCells },
+                    cells: wallCells, shouldBe: 'wall'
                             };
                         }
                     }
                 }
-            }
-        }
+        return null;
     }
+    
+    // Find non-adjacent empty cells that must be paths
+    const pathCells = isRow 
+        ? findEmptyCellsInRow(merged, r, { r, c })
+        : findEmptyCellsInCol(merged, c, { r, c });
+    
+                if (pathCells.length > 0) {
+                    const cellsText = pathCells.length === 1 ? `Cell ${formatCellList(pathCells)} must be a path` : `Cells ${formatCellList(pathCells)} must be paths`;
+        const lineName = isRow ? `Row ${rowToNumber(r)}` : `Column ${colToLetter(c)}`;
+                    return {
+            message: `${cellsText}. ${lineName} needs only 1 more wall, which must be adjacent to the dead end at ${cellRef(r, c)}.`,
+                        highlight: pathCells.length === 1 ? { type: 'cell', r: pathCells[0].r, c: pathCells[0].c } : { type: 'cells', cells: pathCells },
+                        cells: pathCells, shouldBe: 'path'
+                    };
+    }
+    
+    // All non-adjacent cells are already paths - check perpendicular cells
+    const perpCells = getPerpendicularCells(merged, r, c, isRow ? 'row' : 'col');
+    const wallCells = perpCells.filter(cell => cell.isEmpty).map(cell => ({ r: cell.r, c: cell.c }));
+
+                if (wallCells.length > 0) {
+        const cellsText = formatCellList(wallCells);
+        const lineName = isRow ? `row ${rowToNumber(r)}` : `column ${colToLetter(c)}`;
+        const perpLineName = isRow ? `column ${colToLetter(c)}` : `row ${rowToNumber(r)}`;
+                    return {
+            message: `The exit for the dead end at ${cellRef(r, c)} must be in ${lineName}. The dead end needs 3 walls total, so the adjacent cell${wallCells.length > 1 ? 's' : ''} at ${cellsText} in ${perpLineName} must be ${wallCells.length === 1 ? 'a wall' : 'walls'}.`,
+                        highlight: wallCells.length === 1 ? { type: 'cell', r: wallCells[0].r, c: wallCells[0].c } : { type: 'cells', cells: wallCells },
+                        cells: wallCells, shouldBe: 'wall'
+                    };
+                }
+    
     return null;
 }
 
@@ -5040,36 +5983,38 @@ function hintDeadEndAdjacent(merged) {
 // The wall must be adjacent to the dead end, so all other empty cells must be paths
 // Only applies to dead ends with 2 possible exits within the row/col (not corner dead ends)
 function hintEdgeDeadEndOneWall(merged) {
+    // Helper to get neighbor state for a dead end
+    function getNeighborState(merged, r, c) {
+            const leftIdx = r * SIZE + (c - 1);
+            const rightIdx = r * SIZE + (c + 1);
+            const aboveIdx = (r - 1) * SIZE + c;
+            const belowIdx = (r + 1) * SIZE + c;
+
+        return {
+            leftIsWall: c === 0 || merged[leftIdx] === 1,
+            rightIsWall: c === SIZE - 1 || merged[rightIdx] === 1,
+            aboveIsWall: r === 0 || merged[aboveIdx] === 1,
+            belowIsWall: r === SIZE - 1 || merged[belowIdx] === 1,
+            leftIsEmpty: c > 0 && merged[leftIdx] === 0 && !isFixedPath(r, c - 1),
+            rightIsEmpty: c < SIZE - 1 && merged[rightIdx] === 0 && !isFixedPath(r, c + 1),
+            aboveIsEmpty: r > 0 && merged[aboveIdx] === 0 && !isFixedPath(r - 1, c),
+            belowIsEmpty: r < SIZE - 1 && merged[belowIdx] === 0 && !isFixedPath(r + 1, c)
+        };
+    }
+
     // Check edge rows (top and bottom)
     for (const r of [0, SIZE - 1]) {
         const { walls, target } = getRowCounts(merged, r);
         if (target - walls !== 1) continue;
 
-        // Find dead ends in this row that have 2 possible exits (not at corners)
         for (let c = 0; c < SIZE; c++) {
             if (!isTargetDeadEnd(r, c)) continue;
-
             // Skip corner dead ends - they only have 1 exit within the row
             if (c === 0 || c === SIZE - 1) continue;
 
-            // Found a non-corner dead end in an edge row needing 1 wall
-            // Collect all non-adjacent empty cells that must be paths
-            const pathCells = [];
-            for (let cc = 0; cc < SIZE; cc++) {
-                if (Math.abs(cc - c) <= 1) continue; // Skip adjacent cells
-                const idx = r * SIZE + cc;
-                if (merged[idx] === 0 && !isFixedPath(r, cc)) {
-                    pathCells.push({ r, c: cc });
-                }
-            }
-            if (pathCells.length > 0) {
-                const cellsText = pathCells.length === 1 ? `Cell ${formatCellList(pathCells)} must be a path` : `Cells ${formatCellList(pathCells)} must be paths`;
-                return {
-                    message: `${cellsText}. Row ${rowToNumber(r)} needs only 1 more wall, which must be adjacent to the dead end at ${cellRef(r, c)}.`,
-                    highlight: pathCells.length === 1 ? { type: 'cell', r: pathCells[0].r, c: pathCells[0].c } : { type: 'cells', cells: pathCells },
-                    cells: pathCells, shouldBe: 'path'
-                };
-            }
+            const neighborState = getNeighborState(merged, r, c);
+            const hint = checkDeadEndOneWallCase(merged, r, c, true, true, 1, neighborState);
+            if (hint) return hint;
         }
     }
 
@@ -5078,200 +6023,44 @@ function hintEdgeDeadEndOneWall(merged) {
         const { walls, target } = getColCounts(merged, c);
         if (target - walls !== 1) continue;
 
-        // Find dead ends in this column that have 2 possible exits (not at corners)
         for (let r = 0; r < SIZE; r++) {
             if (!isTargetDeadEnd(r, c)) continue;
-
             // Skip corner dead ends - they only have 1 exit within the column
             if (r === 0 || r === SIZE - 1) continue;
 
-            // Found a non-corner dead end in an edge column needing 1 wall
-            // Collect all non-adjacent empty cells that must be paths
-            const pathCells = [];
-            for (let rr = 0; rr < SIZE; rr++) {
-                if (Math.abs(rr - r) <= 1) continue; // Skip adjacent cells
-                const idx = rr * SIZE + c;
-                if (merged[idx] === 0 && !isFixedPath(rr, c)) {
-                    pathCells.push({ r: rr, c });
-                }
-            }
-            if (pathCells.length > 0) {
-                const cellsText = pathCells.length === 1 ? `Cell ${formatCellList(pathCells)} must be a path` : `Cells ${formatCellList(pathCells)} must be paths`;
-                return {
-                    message: `${cellsText}. Column ${colToLetter(c)} needs only 1 more wall, which must be adjacent to the dead end at ${cellRef(r, c)}.`,
-                    highlight: pathCells.length === 1 ? { type: 'cell', r: pathCells[0].r, c: pathCells[0].c } : { type: 'cells', cells: pathCells },
-                    cells: pathCells, shouldBe: 'path'
-                };
-            }
+            const neighborState = getNeighborState(merged, r, c);
+            const hint = checkDeadEndOneWallCase(merged, r, c, false, true, 1, neighborState);
+            if (hint) return hint;
         }
     }
 
     // Check interior rows with dead ends
-    // A dead end needs 3 wall neighbors. If the row can only provide N more walls,
-    // and the dead end still needs more than N walls from the row direction (left/right),
-    // then the remaining walls must come from above/below.
     for (let r = 1; r < SIZE - 1; r++) {
         const { walls, target } = getRowCounts(merged, r);
-        const remainingWallsForRow = target - walls;
-        if (remainingWallsForRow < 1) continue;
+        const remainingWalls = target - walls;
+        if (remainingWalls < 1) continue;
 
         for (let c = 0; c < SIZE; c++) {
             if (!isTargetDeadEnd(r, c)) continue;
 
-            // Count walls the dead end already has and potential walls from each direction
-            const leftIdx = r * SIZE + (c - 1);
-            const rightIdx = r * SIZE + (c + 1);
-            const aboveIdx = (r - 1) * SIZE + c;
-            const belowIdx = (r + 1) * SIZE + c;
-
-            const leftIsWall = c === 0 || merged[leftIdx] === 1;
-            const rightIsWall = c === SIZE - 1 || merged[rightIdx] === 1;
-            const aboveIsWall = merged[aboveIdx] === 1;
-            const belowIsWall = merged[belowIdx] === 1;
-
-            const leftIsEmpty = c > 0 && merged[leftIdx] === 0 && !isFixedPath(r, c - 1);
-            const rightIsEmpty = c < SIZE - 1 && merged[rightIdx] === 0 && !isFixedPath(r, c + 1);
-            const aboveIsEmpty = merged[aboveIdx] === 0 && !isFixedPath(r - 1, c);
-            const belowIsEmpty = merged[belowIdx] === 0 && !isFixedPath(r + 1, c);
-
-            // Count existing walls around dead end
-            const existingWalls = (leftIsWall ? 1 : 0) + (rightIsWall ? 1 : 0) + (aboveIsWall ? 1 : 0) + (belowIsWall ? 1 : 0);
-            const wallsStillNeeded = 3 - existingWalls;
-
-            if (wallsStillNeeded <= 0) continue; // Dead end already satisfied
-
-            // Count how many walls could come from the row (left/right empty cells)
-            const potentialRowWalls = (leftIsEmpty ? 1 : 0) + (rightIsEmpty ? 1 : 0);
-
-            // The row can provide at most min(remainingWallsForRow, potentialRowWalls) walls to this dead end
-            const maxWallsFromRow = Math.min(remainingWallsForRow, potentialRowWalls);
-
-            // How many walls could come from outside the row (above/below)?
-            const potentialOutsideWalls = (aboveIsEmpty ? 1 : 0) + (belowIsEmpty ? 1 : 0);
-
-            // How many walls MUST come from the row? (if outside can't provide enough)
-            const wallsNeededFromRow = Math.max(0, wallsStillNeeded - potentialOutsideWalls);
-
-            // How many walls MUST come from outside the row? (if row can't provide enough)
-            const wallsNeededFromOutside = Math.max(0, wallsStillNeeded - maxWallsFromRow);
-
-            // Path hint: only when row needs exactly 1 wall AND dead end MUST get that wall
-            // (i.e., the dead end can't get all its walls from above/below)
-            if (remainingWallsForRow === 1 && wallsNeededFromRow >= 1) {
-                const pathCells = [];
-                for (let cc = 0; cc < SIZE; cc++) {
-                    if (Math.abs(cc - c) <= 1) continue; // Skip adjacent cells
-                    const idx = r * SIZE + cc;
-                    if (merged[idx] === 0 && !isFixedPath(r, cc)) {
-                        pathCells.push({ r, c: cc });
-                    }
-                }
-                if (pathCells.length > 0) {
-                    const cellsText = pathCells.length === 1 ? `Cell ${formatCellList(pathCells)} must be a path` : `Cells ${formatCellList(pathCells)} must be paths`;
-                    return {
-                        message: `${cellsText}. Row ${rowToNumber(r)} needs only 1 more wall, which must be adjacent to the dead end at ${cellRef(r, c)}.`,
-                        highlight: pathCells.length === 1 ? { type: 'cell', r: pathCells[0].r, c: pathCells[0].c } : { type: 'cells', cells: pathCells },
-                        cells: pathCells, shouldBe: 'path'
-                    };
-                }
-            }
-
-            // Wall hint: only when we need 2+ walls from outside (both above AND below must be walls)
-            if (wallsNeededFromOutside >= 2) {
-                const wallCells = [];
-                if (aboveIsEmpty) wallCells.push({ r: r - 1, c });
-                if (belowIsEmpty) wallCells.push({ r: r + 1, c });
-
-                if (wallCells.length > 0) {
-                    const cellsText = wallCells.length === 1 ? `Cell ${formatCellList(wallCells)} must be a wall` : `Cells ${formatCellList(wallCells)} must be walls`;
-                    return {
-                        message: `${cellsText}. The dead end at ${cellRef(r, c)} needs ${wallsStillNeeded} more wall${wallsStillNeeded > 1 ? 's' : ''}, but row ${rowToNumber(r)} can only provide ${maxWallsFromRow}, so the cells above and below must be walls.`,
-                        highlight: wallCells.length === 1 ? { type: 'cell', r: wallCells[0].r, c: wallCells[0].c } : { type: 'cells', cells: wallCells },
-                        cells: wallCells, shouldBe: 'wall'
-                    };
-                }
-            }
+            const neighborState = getNeighborState(merged, r, c);
+            const hint = checkDeadEndOneWallCase(merged, r, c, true, false, remainingWalls, neighborState);
+            if (hint) return hint;
         }
     }
 
-    // Check interior columns with dead ends (same logic as rows)
+    // Check interior columns with dead ends
     for (let c = 1; c < SIZE - 1; c++) {
         const { walls, target } = getColCounts(merged, c);
-        const remainingWallsForCol = target - walls;
-        if (remainingWallsForCol < 1) continue;
+        const remainingWalls = target - walls;
+        if (remainingWalls < 1) continue;
 
         for (let r = 0; r < SIZE; r++) {
             if (!isTargetDeadEnd(r, c)) continue;
 
-            const leftIdx = r * SIZE + (c - 1);
-            const rightIdx = r * SIZE + (c + 1);
-            const aboveIdx = (r - 1) * SIZE + c;
-            const belowIdx = (r + 1) * SIZE + c;
-
-            const aboveIsWall = r === 0 || merged[aboveIdx] === 1;
-            const belowIsWall = r === SIZE - 1 || merged[belowIdx] === 1;
-            const leftIsWall = merged[leftIdx] === 1;
-            const rightIsWall = merged[rightIdx] === 1;
-
-            const aboveIsEmpty = r > 0 && merged[aboveIdx] === 0 && !isFixedPath(r - 1, c);
-            const belowIsEmpty = r < SIZE - 1 && merged[belowIdx] === 0 && !isFixedPath(r + 1, c);
-            const leftIsEmpty = merged[leftIdx] === 0 && !isFixedPath(r, c - 1);
-            const rightIsEmpty = merged[rightIdx] === 0 && !isFixedPath(r, c + 1);
-
-            const existingWalls = (leftIsWall ? 1 : 0) + (rightIsWall ? 1 : 0) + (aboveIsWall ? 1 : 0) + (belowIsWall ? 1 : 0);
-            const wallsStillNeeded = 3 - existingWalls;
-
-            if (wallsStillNeeded <= 0) continue;
-
-            // Count how many walls could come from the column (above/below empty cells)
-            const potentialColWalls = (aboveIsEmpty ? 1 : 0) + (belowIsEmpty ? 1 : 0);
-            const maxWallsFromCol = Math.min(remainingWallsForCol, potentialColWalls);
-
-            // How many walls could come from outside the column (left/right)?
-            const potentialOutsideWalls = (leftIsEmpty ? 1 : 0) + (rightIsEmpty ? 1 : 0);
-
-            // How many walls MUST come from the column? (if outside can't provide enough)
-            const wallsNeededFromCol = Math.max(0, wallsStillNeeded - potentialOutsideWalls);
-
-            // How many walls MUST come from outside the column? (if column can't provide enough)
-            const wallsNeededFromOutside = Math.max(0, wallsStillNeeded - maxWallsFromCol);
-
-            // Path hint: only when column needs exactly 1 wall AND dead end MUST get that wall
-            // (i.e., the dead end can't get all its walls from left/right)
-            if (remainingWallsForCol === 1 && wallsNeededFromCol >= 1) {
-                const pathCells = [];
-                for (let rr = 0; rr < SIZE; rr++) {
-                    if (Math.abs(rr - r) <= 1) continue;
-                    const idx = rr * SIZE + c;
-                    if (merged[idx] === 0 && !isFixedPath(rr, c)) {
-                        pathCells.push({ r: rr, c });
-                    }
-                }
-                if (pathCells.length > 0) {
-                    const cellsText = pathCells.length === 1 ? `Cell ${formatCellList(pathCells)} must be a path` : `Cells ${formatCellList(pathCells)} must be paths`;
-                    return {
-                        message: `${cellsText}. Column ${colToLetter(c)} needs only 1 more wall, which must be adjacent to the dead end at ${cellRef(r, c)}.`,
-                        highlight: pathCells.length === 1 ? { type: 'cell', r: pathCells[0].r, c: pathCells[0].c } : { type: 'cells', cells: pathCells },
-                        cells: pathCells, shouldBe: 'path'
-                    };
-                }
-            }
-
-            // Wall hint: only when we need 2+ walls from outside (both left AND right must be walls)
-            if (wallsNeededFromOutside >= 2) {
-                const wallCells = [];
-                if (leftIsEmpty) wallCells.push({ r, c: c - 1 });
-                if (rightIsEmpty) wallCells.push({ r, c: c + 1 });
-
-                if (wallCells.length > 0) {
-                    const cellsText = wallCells.length === 1 ? `Cell ${formatCellList(wallCells)} must be a wall` : `Cells ${formatCellList(wallCells)} must be walls`;
-                    return {
-                        message: `${cellsText}. The dead end at ${cellRef(r, c)} needs ${wallsStillNeeded} more wall${wallsStillNeeded > 1 ? 's' : ''}, but column ${colToLetter(c)} can only provide ${maxWallsFromCol}, so the cells left and right must be walls.`,
-                        highlight: wallCells.length === 1 ? { type: 'cell', r: wallCells[0].r, c: wallCells[0].c } : { type: 'cells', cells: wallCells },
-                        cells: wallCells, shouldBe: 'wall'
-                    };
-                }
-            }
+            const neighborState = getNeighborState(merged, r, c);
+            const hint = checkDeadEndOneWallCase(merged, r, c, false, false, remainingWalls, neighborState);
+            if (hint) return hint;
         }
     }
 
@@ -5298,7 +6087,14 @@ function validateHint(hint, hintName) {
 
     const expectedValue = hint.shouldBe === 'wall' ? 1 : 0; // solution uses 1=wall, 0=path
 
-    for (const cell of hint.cells) {
+    // If validateOnlyHighlighted is set, only validate the highlighted cells
+    const cellsToValidate = hint.validateOnlyHighlighted && hint.highlight 
+        ? (hint.highlight.type === 'cell' 
+            ? [{ r: hint.highlight.r, c: hint.highlight.c }]
+            : (hint.highlight.cells || []))
+        : hint.cells;
+
+    for (const cell of cellsToValidate) {
         const solutionValue = solution[cell.r][cell.c];
         if (solutionValue !== expectedValue) {
             if (DEBUG_HINTS) {
@@ -5483,9 +6279,11 @@ function getHint() {
 
         // ===== LEVEL 3: MODERATE (pattern recognition or 2-step reasoning) =====
         // Empty cell surrounded by walls/edges would be invalid dead end
-        { name: 'hintEmptyDeadEndMustBeWall', fn: () => hintEmptyDeadEndMustBeWall(merged) },
+        { name: 'hintEmptyDeadEndMustBeWall', fn: () => hintEmptyDeadEndMustBeWall(merged, null) },
         // Vault interior cells must be paths when only one vault position works
         { name: 'hintVaultInteriorMustBePath', fn: () => hintVaultInteriorMustBePath(merged) },
+        // Vault exit cannot be adjacent to dead end in certain positions
+        { name: 'hintVaultExitDeadEnd', fn: () => hintVaultExitDeadEnd(merged) },
         // Two adjacent dead ends: the cell between them must connect them
         { name: 'hintDeadEndAdjacent', fn: () => hintDeadEndAdjacent(merged) },
         // Corner with flanking dead ends on both edges
@@ -5504,6 +6302,8 @@ function getHint() {
         // ===== LEVEL 5: COMPLEX (hypothetical reasoning / lookahead) =====
         // Completing a row/col would cause an error elsewhere
         { name: 'hintRowColCompletionCausesError', fn: () => hintRowColCompletionCausesError(merged) },
+        // Only 4 empty cells left with two valid solutions
+        { name: 'hintTwoValidSolutions', fn: () => hintTwoValidSolutions(merged, null) },
 
         // ===== LEVEL 6: TRIAL AND ERROR =====
         // No logical deduction possible, must try a hypothesis
@@ -5581,8 +6381,9 @@ function getHintForCell(targetR, targetC) {
         { name: 'hintPathMustExtend', fn: () => hintPathMustExtend(merged, forCell) },
 
         // ===== LEVEL 3: MODERATE =====
-        { name: 'hintEmptyDeadEndMustBeWall', fn: () => hintEmptyDeadEndMustBeWall(merged) },
+        { name: 'hintEmptyDeadEndMustBeWall', fn: () => hintEmptyDeadEndMustBeWall(merged, forCell) },
         { name: 'hintVaultInteriorMustBePath', fn: () => hintVaultInteriorMustBePath(merged) },
+        { name: 'hintVaultExitDeadEnd', fn: () => hintVaultExitDeadEnd(merged) },
         { name: 'hintDeadEndAdjacent', fn: () => hintDeadEndAdjacent(merged) },
         { name: 'hintCornerFlankingDeadEnds', fn: () => hintCornerFlankingDeadEnds(merged) },
 
@@ -5593,6 +6394,7 @@ function getHintForCell(targetR, targetC) {
         { name: 'hintCacheNearEdge', fn: () => hintCacheNearEdge(merged) },
         // ===== LEVEL 5: COMPLEX =====
         { name: 'hintRowColCompletionCausesError', fn: () => hintRowColCompletionCausesError(merged) },
+        { name: 'hintTwoValidSolutions', fn: () => hintTwoValidSolutions(merged, forCell) },
 
         // Note: hintFork is excluded - it doesn't apply to specific cells
     ];
@@ -5746,6 +6548,29 @@ function applyHintHighlight(hint) {
 // Toast auto-hide timeout
 let hintToastTimeout = null;
 
+function positionHintToast() {
+    const toast = document.getElementById('hintToast');
+    const grid = document.getElementById('mainGrid');
+    if (!toast || !grid) return;
+
+    const safe = 8; // Minimum distance from viewport edges
+    const gapBelowGrid = 12; // Preferred distance below grid
+
+    // Measure current sizes
+    const gridRect = grid.getBoundingClientRect();
+    const toastRect = toast.getBoundingClientRect();
+
+    // Prefer to sit just below the grid, but clamp so the toast never touches the bottom edge.
+    const preferredTop = gridRect.bottom + gapBelowGrid;
+    const maxTop = window.innerHeight - safe - toastRect.height;
+    const minTop = safe;
+
+    let top = Math.min(preferredTop, maxTop);
+    top = Math.max(top, minTop);
+
+    toast.style.top = `${Math.round(top)}px`;
+}
+
 // Display hint as bottom toast (Android-style)
 function showHint(hint) {
     currentHint = hint;
@@ -5757,6 +6582,7 @@ function showHint(hint) {
     // Show toast and apply highlight immediately
     toast.classList.remove('fading');
     toast.classList.add('visible');
+    positionHintToast();
 
     clearHintHighlights();
     applyHintHighlight(hint);
@@ -5790,8 +6616,19 @@ function hideHintToast() {
 
 // Click on toast to dismiss
 document.getElementById('hintToast').onclick = () => {
+    // Don't allow dismissing hints during tutorial mode
+    if (isTutorialMode) {
+        return;
+    }
     hideHintToast();
 };
+
+window.addEventListener('resize', () => {
+    const toast = document.getElementById('hintToast');
+    if (toast && toast.classList.contains('visible')) {
+        positionHintToast();
+    }
+});
 
 // Apply hint cells to the board (used when Apply Hints setting is enabled)
 function applyHintCells(hint) {
@@ -5802,7 +6639,14 @@ function applyHintCells(hint) {
     const merged = getMergedBoard();
     let appliedAny = false;
 
-    for (const cell of hint.cells) {
+    // If validateOnlyHighlighted is set, only apply to highlighted cells
+    const cellsToApply = hint.validateOnlyHighlighted && hint.highlight 
+        ? (hint.highlight.type === 'cell' 
+            ? [{ r: hint.highlight.r, c: hint.highlight.c }]
+            : (hint.highlight.cells || []))
+        : hint.cells;
+
+    for (const cell of cellsToApply) {
         const idx = cell.r * SIZE + cell.c;
 
         // Skip if cell is already filled
@@ -5812,7 +6656,7 @@ function applyHintCells(hint) {
         if (isFixedPath(cell.r, cell.c)) continue;
 
         // Skip if locked by lower layer
-        const isLocked = layers.slice(0, currentIdx).some(l => l[idx] !== 0);
+        const isLocked = isCellLocked(idx);
         if (isLocked) continue;
 
         // Set fork anchor on first cell we apply in a fork layer
@@ -5854,31 +6698,28 @@ document.getElementById('hintBtn').onclick = () => {
 
     showHint(hint);
 };
-// Cookie helper functions for briefing preference
-function setBriefingCookie(dontShow) {
-    const days = 365;
-    const date = new Date();
-    date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
-    document.cookie = `hideBriefingOnStartup=${dontShow ? '1' : '0'}; expires=${date.toUTCString()}; path=/; SameSite=Lax`;
+// localStorage helper functions for briefing preference (works with file:// protocol)
+function setBriefingPreference(dontShow) {
+    localStorage.setItem('hideBriefingOnStartup', dontShow ? '1' : '0');
 }
 
-function getBriefingCookie() {
-    const match = document.cookie.match(/(?:^|; )hideBriefingOnStartup=([^;]*)/);
-    return match ? match[1] === '1' : false;
+function getBriefingPreference() {
+    const value = localStorage.getItem('hideBriefingOnStartup');
+    return value === '1';
 }
 
-// Show briefing dialog and sync checkbox state with cookie
+// Show briefing dialog and sync checkbox state with preference
 function showBriefingDialog() {
     const checkbox = document.getElementById('dontShowBriefingCheckbox');
     if (checkbox) {
-        checkbox.checked = getBriefingCookie();
+        checkbox.checked = getBriefingPreference();
     }
     document.getElementById('briefingOverlay').style.display = 'flex';
 }
 
 // Show briefing on startup if not disabled
 function showBriefingOnStartup() {
-    if (!getBriefingCookie()) {
+    if (!getBriefingPreference()) {
         showBriefingDialog();
     }
 }
@@ -5888,14 +6729,138 @@ document.getElementById('briefingBtn').onclick = () => {
     document.getElementById('menuOverlay').classList.remove('visible');
     showBriefingDialog();
 };
-document.getElementById('closeBriefingBtn').onclick = () => {
+// Close briefing dialog
+function closeBriefingDialog() {
     ChipSound.click();
     const checkbox = document.getElementById('dontShowBriefingCheckbox');
     if (checkbox) {
-        setBriefingCookie(checkbox.checked);
+        setBriefingPreference(checkbox.checked);
     }
     document.getElementById('briefingOverlay').style.display = 'none';
-};
+}
+
+document.getElementById('closeBriefingBtn').onclick = closeBriefingDialog;
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+    // Don't trigger shortcuts when typing in input fields
+    const activeElement = document.activeElement;
+    if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+        // Allow Escape to close dialogs even when typing
+        if (e.key === 'Escape') {
+            const briefingOverlay = document.getElementById('briefingOverlay');
+            if (briefingOverlay && briefingOverlay.style.display === 'flex') {
+                closeBriefingDialog();
+            }
+        }
+        return;
+    }
+
+    // Close briefing dialog on Escape key
+    if (e.key === 'Escape') {
+        const briefingOverlay = document.getElementById('briefingOverlay');
+        if (briefingOverlay && briefingOverlay.style.display === 'flex') {
+            closeBriefingDialog();
+        }
+        return;
+    }
+
+    // Tool selection: 1-5 for Wall, Path, Erase, Auto, Hint
+    if (e.key >= '1' && e.key <= '5') {
+        const toolMap = {
+            '1': 'wall',
+            '2': 'path',
+            '3': 'erase',
+            '4': 'smart',
+            '5': 'hint'
+        };
+        const mode = toolMap[e.key];
+        
+        // Block hint mode if hints are not enabled
+        if (mode === 'hint' && !isHintsEnabled()) {
+            ChipSound.error();
+            return;
+        }
+        
+        // Block Auto and Erase tools in tutorial mode
+        if (isTutorialMode && !isTutorialHintsOnly && (mode === 'smart' || mode === 'erase')) {
+            ChipSound.error();
+            return;
+        }
+        
+        // In tutorial mode, block wrong tool selection
+        if (isTutorialMode && !isTutorialHintsOnly && tutorialHint && tutorialHint.shouldBe) {
+            const requiredTool = tutorialHint.shouldBe === 'wall' ? 'wall' : 'path';
+            if (mode !== requiredTool) {
+                ChipSound.error();
+                return;
+            }
+        }
+        
+        const btn = document.querySelector(`.mode-btn[data-mode="${mode}"]`);
+        if (btn) {
+            e.preventDefault();
+            btn.click();
+        }
+        return;
+    }
+
+    // F for Fork
+    if (e.key === 'f' || e.key === 'F') {
+        const addLayerBtn = document.getElementById('addLayerBtn');
+        if (addLayerBtn && !addLayerBtn.disabled) {
+            e.preventDefault();
+            addLayerBtn.click();
+        }
+        return;
+    }
+
+    // C for Commit
+    if (e.key === 'c' || e.key === 'C') {
+        // Only trigger if not Ctrl/Cmd+C (copy)
+        if (!e.ctrlKey && !e.metaKey) {
+            const commitBtn = document.getElementById('commitBtn');
+            if (commitBtn && !commitBtn.disabled) {
+                e.preventDefault();
+                commitBtn.click();
+            }
+        }
+        return;
+    }
+
+    // D for Discard
+    if (e.key === 'd' || e.key === 'D') {
+        const discardBtn = document.getElementById('discardBtn');
+        if (discardBtn && !discardBtn.disabled) {
+            e.preventDefault();
+            discardBtn.click();
+        }
+        return;
+    }
+
+    // N for Initialize (new puzzle)
+    if (e.key === 'n' || e.key === 'N') {
+        const newMazeBtn = document.getElementById('newMazeBtn');
+        if (newMazeBtn && !newMazeBtn.disabled) {
+            e.preventDefault();
+            newMazeBtn.click();
+        }
+        return;
+    }
+
+    // Ctrl+Z or CMD+Z for Undo
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+        // Only trigger if not Ctrl/Cmd+Shift+Z (redo, if implemented)
+        if (!e.shiftKey) {
+            const undoBtn = document.getElementById('undoBtn');
+            if (undoBtn && !undoBtn.disabled) {
+                e.preventDefault();
+                undoBtn.click();
+            }
+        }
+        return;
+    }
+});
 
 // Slide-in menu
 document.getElementById('menuBtn').onclick = () => {
@@ -5952,14 +6917,13 @@ document.getElementById('musicToggleBtn').onclick = () => {
 
 // User preferences persistence (audio, decrypt overlay)
 function loadUserPreferences() {
-    const match = document.cookie.match(/neuralReconPrefs=([^;]+)/);
-    if (match) {
-        try {
-            const saved = JSON.parse(decodeURIComponent(match[1]));
-            return saved;
-        } catch (e) {
-            console.warn('Failed to parse user preferences cookie');
+    try {
+        const saved = localStorage.getItem('neuralReconPrefs');
+        if (saved) {
+            return JSON.parse(saved);
         }
+    } catch (e) {
+        console.warn('Failed to load user preferences:', e);
     }
     return { soundMuted: false, musicPlaying: true, decryptOverlay: false };
 }
@@ -5970,30 +6934,36 @@ function saveUserPreferences() {
         musicPlaying: ChipMusic.isPlaying(),
         decryptOverlay: showKey
     };
-    const expires = new Date(Date.now() + 365 * 5 * 24 * 60 * 60 * 1000).toUTCString();
-    document.cookie = `neuralReconPrefs=${encodeURIComponent(JSON.stringify(settings))}; expires=${expires}; path=/; SameSite=Lax`;
+    try {
+        localStorage.setItem('neuralReconPrefs', JSON.stringify(settings));
+    } catch (e) {
+        console.warn('Failed to save user preferences:', e);
+    }
 }
 
-// Assist Mode toggle system with cookie persistence
+// Assist Mode toggle system with localStorage persistence
 function loadAssistSettings() {
-    const match = document.cookie.match(/neuralReconAssist=([^;]+)/);
-    if (match) {
-        try {
-            const saved = JSON.parse(decodeURIComponent(match[1]));
+    try {
+        const saved = localStorage.getItem('neuralReconAssist');
+        if (saved) {
+            const parsed = JSON.parse(saved);
             // Merge saved settings with defaults (in case new settings are added)
-            Object.assign(assistSettings, saved);
-            if (saved.visualHints) Object.assign(assistSettings.visualHints, saved.visualHints);
-            if (saved.autoFill) Object.assign(assistSettings.autoFill, saved.autoFill);
-        } catch (e) {
-            console.warn('Failed to parse assist settings cookie');
+            Object.assign(assistSettings, parsed);
+            if (parsed.visualHints) Object.assign(assistSettings.visualHints, parsed.visualHints);
+            if (parsed.autoFill) Object.assign(assistSettings.autoFill, parsed.autoFill);
         }
+    } catch (e) {
+        console.warn('Failed to load assist settings:', e);
     }
     updateAssistUI();
 }
 
 function saveAssistSettings() {
-    const expires = new Date(Date.now() + 365 * 5 * 24 * 60 * 60 * 1000).toUTCString();
-    document.cookie = `neuralReconAssist=${encodeURIComponent(JSON.stringify(assistSettings))}; expires=${expires}; path=/; SameSite=Lax`;
+    try {
+        localStorage.setItem('neuralReconAssist', JSON.stringify(assistSettings));
+    } catch (e) {
+        console.warn('Failed to save assist settings:', e);
+    }
 }
 
 function updateToggleUI(btnId, stateId, enabled) {
@@ -6331,10 +7301,36 @@ document.getElementById('resetAllConfirmBtn').onclick = () => {
     PlayerStats.clear();
     GameState.clear();
     clearTutorialCompleted();
+    clearDataVaultIntroSeen();
+    
+    // Clear Auto tool explanation flag
+    try {
+        localStorage.removeItem('hasSeenAutoToolExplanation');
+    } catch (e) {
+        // Ignore storage errors
+    }
+    
+    // Clear Fork explanation flag
+    try {
+        localStorage.removeItem('hasSeenForkExplanation');
+    } catch (e) {
+        // Ignore storage errors
+    }
+    
+    // Clear Hint explanation flag
+    try {
+        localStorage.removeItem('hasSeenHintExplanation');
+    } catch (e) {
+        // Ignore storage errors
+    }
 
     // Reset runtime state
     winStreak = 0;
     hasCompletedTutorial = false;
+    hasSeenAutoToolExplanation = false;
+    hasSeenForkExplanation = false;
+    hasSeenHintExplanation = false;
+    hasSeenDataVaultIntro = false;
 
     // Update UI
     updateGridSizeSelect();
@@ -6382,10 +7378,71 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
             ChipSound.error();
             return;
         }
+        // Block Auto and Erase tools in tutorial mode
+        if (isTutorialMode && !isTutorialHintsOnly && (btn.dataset.mode === 'smart' || btn.dataset.mode === 'erase')) {
+            ChipSound.error();
+            return;
+        }
+        
+        // In tutorial mode, block wrong tool selection
+        if (isTutorialMode && !isTutorialHintsOnly && tutorialHint && tutorialHint.shouldBe) {
+            const requiredTool = tutorialHint.shouldBe === 'wall' ? 'wall' : 'path';
+            if (btn.dataset.mode !== requiredTool) {
+                ChipSound.error();
+                return; // Block the tool switch
+            }
+        }
+        
+        // Check if Auto tool is already selected
+        const wasAutoToolSelected = drawingMode === 'smart' && btn.dataset.mode === 'smart';
+        
         ChipSound.click();
         document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
         drawingMode = btn.dataset.mode;
+
+        // Show Auto tool explanation on first use or when tapping already-selected Auto tool (not during tutorial)
+        if (drawingMode === 'smart' && !isTutorialMode) {
+            if (!hasSeenAutoToolExplanation) {
+                showAutoToolExplanation();
+            } else if (wasAutoToolSelected) {
+                // User tapped Auto tool while it's already selected - show explanation
+                const dialog = document.getElementById('autoToolDialog');
+                if (dialog) {
+                    dialog.showModal();
+                    // Scroll to top
+                    dialog.scrollTop = 0;
+                }
+            }
+        }
+
+        // Show Hint tool explanation on first use (not during tutorial)
+        if (drawingMode === 'hint' && !isTutorialMode) {
+            if (!hasSeenHintExplanation) {
+                showHintExplanation();
+            }
+        }
+
+        // In tutorial mode, check if correct tool is now selected and show hint if needed
+        if (isTutorialMode) {
+            if (tutorialHint) {
+                // We have a pending hint - check if correct tool is now selected
+                if (checkTutorialToolSelection(tutorialHint)) {
+                    // Correct tool selected, show the stored hint
+                    const toast = document.getElementById('hintToast');
+                    const message = document.getElementById('hintMessage');
+                    message.textContent = tutorialHint.message;
+                    toast.classList.remove('fading');
+                    toast.classList.add('visible', 'tutorial-mode');
+                    positionHintToast();
+                    clearHintHighlights();
+                    applyTutorialHighlight(tutorialHint);
+                }
+            } else {
+                // No pending hint, try to get and show next hint
+                showTutorialHint();
+            }
+        }
     };
 });
 
@@ -6437,7 +7494,7 @@ function updateBriefingTerminology(theme) {
     document.querySelectorAll('.theme-wall').forEach(el => el.textContent = t.wall || 'Wall');
     document.querySelectorAll('.theme-path').forEach(el => el.textContent = t.path || 'Path');
     document.querySelectorAll('.theme-deadend').forEach(el => el.textContent = t.deadEnd || 'Dead End');
-    document.querySelectorAll('.theme-stockpile').forEach(el => el.textContent = t.stockpile || 'Stockpile');
+    document.querySelectorAll('.theme-stockpile').forEach(el => el.textContent = t.stockpile || 'Data Cache');
     document.querySelectorAll('.theme-vault').forEach(el => el.textContent = t.vault || 'Vault');
     document.querySelectorAll('.theme-fork').forEach(el => el.textContent = t.fork || 'Fork');
     document.querySelectorAll('.theme-commit').forEach(el => el.textContent = t.commit || 'Commit');
@@ -6463,6 +7520,105 @@ function saveDataVaultIntroSeen() {
         localStorage.setItem('hasSeenDataVaultIntro', 'true');
     } catch (e) {
         // Ignore storage errors
+    }
+}
+
+// Load Auto tool explanation seen flag from localStorage
+function loadAutoToolExplanationSeen() {
+    try {
+        return localStorage.getItem('hasSeenAutoToolExplanation') === 'true';
+    } catch (e) {
+        return false;
+    }
+}
+
+// Save Auto tool explanation seen flag to localStorage
+function saveAutoToolExplanationSeen() {
+    try {
+        localStorage.setItem('hasSeenAutoToolExplanation', 'true');
+    } catch (e) {
+        // Ignore storage errors
+    }
+}
+
+// Show Auto tool explanation dialog
+function showAutoToolExplanation() {
+    if (hasSeenAutoToolExplanation) return;
+    
+    hasSeenAutoToolExplanation = true;
+    saveAutoToolExplanationSeen();
+    
+    const dialog = document.getElementById('autoToolDialog');
+    if (dialog) {
+        dialog.showModal();
+        // Scroll to top
+        dialog.scrollTop = 0;
+    }
+}
+
+// Load Fork explanation seen flag from localStorage
+function loadForkExplanationSeen() {
+    try {
+        return localStorage.getItem('hasSeenForkExplanation') === 'true';
+    } catch (e) {
+        return false;
+    }
+}
+
+// Save Fork explanation seen flag to localStorage
+function saveForkExplanationSeen() {
+    try {
+        localStorage.setItem('hasSeenForkExplanation', 'true');
+    } catch (e) {
+        // Ignore storage errors
+    }
+}
+
+// Show Fork explanation dialog
+function showForkExplanation() {
+    if (hasSeenForkExplanation) return;
+    
+    hasSeenForkExplanation = true;
+    saveForkExplanationSeen();
+    
+    const dialog = document.getElementById('forkDialog');
+    if (dialog) {
+        dialog.showModal();
+        // Scroll to top
+        dialog.scrollTop = 0;
+    }
+}
+
+// Load Hint explanation seen flag from localStorage
+function loadHintExplanationSeen() {
+    try {
+        return localStorage.getItem('hasSeenHintExplanation') === 'true';
+    } catch (e) {
+        return false;
+    }
+}
+
+// Save Hint explanation seen flag to localStorage
+function saveHintExplanationSeen() {
+    try {
+        localStorage.setItem('hasSeenHintExplanation', 'true');
+    } catch (e) {
+        // Ignore storage errors
+    }
+}
+
+// Show Hint explanation dialog
+function showHintExplanation() {
+    if (hasSeenHintExplanation) return;
+    
+    hasSeenHintExplanation = true;
+    saveHintExplanationSeen();
+    
+    const dialog = document.getElementById('hintDialog');
+    if (dialog) {
+        dialog.showModal();
+        // Scroll to top
+        dialog.scrollTop = 0;
     }
 }
 
@@ -6493,23 +7649,50 @@ function clearTutorialCompleted() {
     }
 }
 
+// Clear data vault intro seen flag from localStorage
+function clearDataVaultIntroSeen() {
+    try {
+        localStorage.removeItem('hasSeenDataVaultIntro');
+    } catch (e) {
+        // Ignore storage errors
+    }
+}
+
 // Start tutorial mode
-function startTutorial(useCurrentPuzzle = false) {
+function startTutorial(useCurrentPuzzle = false, options = {}) {
     // Exit any existing tutorial mode
     endTutorial();
 
     isTutorialMode = true;
     isUserInitiatedTutorial = useCurrentPuzzle;
+    isTutorialHintsOnly = !!options.hintsOnly;
     tutorialHint = null;
+    lastTutorialTool = null; // Reset tool tracking
+    wallSwitchCount = 0; // Reset switch counters
+    pathSwitchCount = 0; // Reset switch counters
 
     // Close menu if open
     closeMenu();
 
-    // Switch to Auto tool
-    drawingMode = 'smart';
-    document.querySelectorAll('.mode-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.mode === 'smart');
-    });
+    if (!isTutorialHintsOnly) {
+        // Hide Auto and Erase tools during tutorial
+        const autoBtn = document.querySelector('.mode-btn[data-mode="smart"]');
+        const eraseBtn = document.querySelector('.mode-btn[data-mode="erase"]');
+        if (autoBtn) autoBtn.style.display = 'none';
+        if (eraseBtn) eraseBtn.style.display = 'none';
+
+        // Hide the entire top row (header strip) during tutorial
+        const headerStrip = document.querySelector('.header-strip');
+        if (headerStrip) {
+            headerStrip.style.display = 'none';
+        }
+
+        // Switch to Path tool (will be guided to correct tool before first hint)
+        drawingMode = 'path';
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === 'path');
+        });
+    }
 
     if (!useCurrentPuzzle) {
         // Set to 4x4 and generate tutorial puzzle with specific seed
@@ -6526,10 +7709,17 @@ function startTutorial(useCurrentPuzzle = false) {
         render();
     }
 
-    // Show intro dialog
-    const dialog = document.getElementById('tutorialIntroDialog');
-    if (dialog) {
-        dialog.showModal();
+    if (!isTutorialHintsOnly) {
+        // Show intro dialog
+        const dialog = document.getElementById('tutorialIntroDialog');
+        if (dialog) {
+            dialog.showModal();
+        }
+    } else {
+        // Hints-only: show hints immediately (no intro dialog, no tool gating)
+        setTimeout(() => {
+            if (isTutorialMode && !isWon) showTutorialHint();
+        }, 400); // Wait for any pending hideHintToast() cleanup to finish
     }
 }
 
@@ -6537,6 +7727,22 @@ function startTutorial(useCurrentPuzzle = false) {
 function endTutorial() {
     isTutorialMode = false;
     tutorialHint = null;
+    lastTutorialTool = null; // Reset tool tracking
+    wallSwitchCount = 0; // Reset switch counters
+    pathSwitchCount = 0; // Reset switch counters
+    isTutorialHintsOnly = false;
+
+    // Show Auto and Erase tools again
+    const autoBtn = document.querySelector('.mode-btn[data-mode="smart"]');
+    const eraseBtn = document.querySelector('.mode-btn[data-mode="erase"]');
+    if (autoBtn) autoBtn.style.display = '';
+    if (eraseBtn) eraseBtn.style.display = '';
+
+    // Show the header strip again
+    const headerStrip = document.querySelector('.header-strip');
+    if (headerStrip) {
+        headerStrip.style.display = '';
+    }
 
     // Clear tutorial-specific UI
     const toast = document.getElementById('hintToast');
@@ -6545,6 +7751,94 @@ function endTutorial() {
     }
     clearHintHighlights();
     hideHintToast();
+}
+
+// Check if correct tool is selected for tutorial hint
+function checkTutorialToolSelection(hint) {
+    if (isTutorialHintsOnly) return true;
+    if (!hint || !hint.shouldBe) return true; // No tool requirement, allow any
+
+    const requiredTool = hint.shouldBe === 'wall' ? 'wall' : 'path';
+    return drawingMode === requiredTool;
+}
+
+// Guide user to select correct tool in tutorial
+function guideTutorialToolSelection(hint) {
+    if (isTutorialHintsOnly) return;
+    if (!hint || !hint.shouldBe) return;
+
+    const requiredTool = hint.shouldBe === 'wall' ? 'wall' : 'path';
+    const toolName = requiredTool === 'wall' ? 'Wall' : 'Path';
+
+    // Highlight the required tool
+    clearTutorialToolHighlight();
+    const toolBtn = document.querySelector(`.mode-btn[data-mode="${requiredTool}"]`);
+    if (toolBtn) {
+        toolBtn.classList.add('tutorial-tool-highlight');
+    }
+
+    // Show guidance message
+    const toast = document.getElementById('hintToast');
+    const message = document.getElementById('hintMessage');
+    message.textContent = `Select the ${toolName} tool.`;
+
+    toast.classList.remove('fading');
+    toast.classList.add('visible', 'tutorial-mode');
+    positionHintToast();
+
+    // Clear any existing timeouts
+    if (hintToastTimeout) {
+        clearTimeout(hintToastTimeout);
+        hintToastTimeout = null;
+    }
+}
+
+// Show transition message when tool changes in tutorial
+function showTutorialToolTransition(requiredTool) {
+    if (isTutorialHintsOnly) return;
+    let messageText = '';
+    
+    if (requiredTool === 'wall') {
+        wallSwitchCount++;
+        if (wallSwitchCount === 1) {
+            messageText = "Now we'll start putting in some walls.";
+        } else if (wallSwitchCount === 2) {
+            messageText = "Time to add more walls.";
+        } else {
+            messageText = "Let's continue with walls.";
+        }
+    } else if (requiredTool === 'path') {
+        pathSwitchCount++;
+        if (pathSwitchCount === 1) {
+            messageText = "Looks like we have some more paths to put in now.";
+        } else {
+            messageText = "Let's continue with paths.";
+        }
+    }
+
+    const toast = document.getElementById('hintToast');
+    const message = document.getElementById('hintMessage');
+    message.textContent = messageText;
+
+    toast.classList.remove('fading');
+    toast.classList.add('visible', 'tutorial-mode');
+    positionHintToast();
+
+    // Clear any existing timeouts
+    if (hintToastTimeout) {
+        clearTimeout(hintToastTimeout);
+        hintToastTimeout = null;
+    }
+
+    // Highlight the required tool (user must manually select it)
+    clearTutorialToolHighlight();
+    const toolBtn = document.querySelector(`.mode-btn[data-mode="${requiredTool}"]`);
+    if (toolBtn) {
+        toolBtn.classList.add('tutorial-tool-highlight');
+    }
+
+    // Don't automatically switch - user must select the tool themselves
+    // The tool selection handler will detect when correct tool is selected and show the hint
 }
 
 // Show the next tutorial hint
@@ -6557,6 +7851,53 @@ function showTutorialHint() {
         return;
     }
 
+    // Hints-only tutorial: always show hint immediately (no tool gating or tool-change transitions)
+    if (isTutorialHintsOnly) {
+        tutorialHint = hint;
+
+        const toast = document.getElementById('hintToast');
+        const message = document.getElementById('hintMessage');
+        message.textContent = hint.message;
+
+        toast.classList.remove('fading');
+        toast.classList.add('visible', 'tutorial-mode');
+        positionHintToast();
+
+        // Clear any existing timeouts - tutorial hints don't auto-hide
+        if (hintToastTimeout) {
+            clearTimeout(hintToastTimeout);
+            hintToastTimeout = null;
+        }
+
+        clearHintHighlights();
+        applyTutorialHighlight(hint);
+        return;
+    }
+
+    // Determine required tool
+    const requiredTool = hint.shouldBe ? (hint.shouldBe === 'wall' ? 'wall' : 'path') : null;
+
+    // Check if tool has changed
+    if (requiredTool && lastTutorialTool !== null && lastTutorialTool !== requiredTool) {
+        // Tool changed - show transition message first
+        tutorialHint = hint;
+        lastTutorialTool = requiredTool;
+        showTutorialToolTransition(requiredTool);
+        return;
+    }
+
+    // Update last tool
+    if (requiredTool) {
+        lastTutorialTool = requiredTool;
+    }
+
+    // Check if correct tool is selected before showing hint
+    if (!checkTutorialToolSelection(hint)) {
+        tutorialHint = hint; // Store hint so we can show it when correct tool is selected
+        guideTutorialToolSelection(hint);
+        return; // Don't show hint until correct tool is selected
+    }
+
     tutorialHint = hint;
 
     // Show hint in persistent mode
@@ -6567,6 +7908,7 @@ function showTutorialHint() {
 
     toast.classList.remove('fading');
     toast.classList.add('visible', 'tutorial-mode');
+    positionHintToast();
 
     // Clear any existing timeouts - tutorial hints don't auto-hide
     if (hintToastTimeout) {
@@ -6738,6 +8080,13 @@ function showDataVaultIntro() {
 }
 
 window.onload = () => {
+    // Keep the board sized correctly on viewport changes (rotation, URL bar collapse, etc.)
+    window.addEventListener('resize', scheduleLayoutUpdate, { passive: true });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', scheduleLayoutUpdate, { passive: true });
+        window.visualViewport.addEventListener('scroll', scheduleLayoutUpdate, { passive: true });
+    }
+
     // Initialize theme system if available
     if (typeof ThemeManager !== 'undefined') {
         ThemeManager.loadSaved('cyberpunk');
@@ -6826,6 +8175,9 @@ window.onload = () => {
         }
     }
 
+    // One more pass after initial layout settles.
+    scheduleLayoutUpdate();
+
     // Save game state when page is about to unload (only if tutorial completed)
     window.addEventListener('beforeunload', () => {
         if (hasCompletedTutorial && !isTutorialMode) {
@@ -6840,7 +8192,7 @@ window.onload = () => {
         }
     });
 
-    // Show briefing on startup if not disabled by cookie (only if tutorial completed)
+    // Show briefing on startup if not disabled by preference (only if tutorial completed)
     if (hasCompletedTutorial) {
         showBriefingOnStartup();
     }
@@ -6890,6 +8242,15 @@ window.onload = () => {
 
     // Load data vault intro seen flag
     hasSeenDataVaultIntro = loadDataVaultIntroSeen();
+    
+    // Load Auto tool explanation seen flag
+    hasSeenAutoToolExplanation = loadAutoToolExplanationSeen();
+    
+    // Load Fork explanation seen flag
+    hasSeenForkExplanation = loadForkExplanationSeen();
+    
+    // Load Hint explanation seen flag
+    hasSeenHintExplanation = loadHintExplanationSeen();
 
     // Tutorial dialog handlers
     const tutorialIntroDialog = document.getElementById('tutorialIntroDialog');
@@ -6900,28 +8261,88 @@ window.onload = () => {
     document.getElementById('tutorialIntroStartBtn').onclick = () => {
         ChipSound.click();
         tutorialIntroDialog.close();
-        // Start showing hints after a brief delay
+        // Get the first hint to determine required tool, then guide user
         setTimeout(() => {
+            const hint = getHint();
+            if (hint && hint.shouldBe) {
+                const requiredTool = hint.shouldBe === 'wall' ? 'wall' : 'path';
+                lastTutorialTool = requiredTool; // Set initial tool tracking
+                
+                // Check if correct tool is already selected
+                if (checkTutorialToolSelection(hint)) {
+                    // Tool is already correct, show hint directly
+                    tutorialHint = hint;
+                    const toast = document.getElementById('hintToast');
+                    const message = document.getElementById('hintMessage');
+                    message.textContent = hint.message;
+                    toast.classList.remove('fading');
+                    toast.classList.add('visible', 'tutorial-mode');
+                    positionHintToast();
+                    clearHintHighlights();
+                    applyTutorialHighlight(hint);
+                } else {
+                    // Guide user to select correct tool before showing hint
+                    guideTutorialToolSelection(hint);
+                    // Store hint so we can show it when correct tool is selected
+                    tutorialHint = hint;
+                }
+            } else {
+                // No tool requirement, show hint directly
             showTutorialHint();
+            }
         }, 500);
     };
 
-    // Tutorial complete - continue button
-    document.getElementById('tutorialCompleteBtn').onclick = () => {
-        ChipSound.click();
-        tutorialCompleteDialog.close();
+    // Tutorial intro - Escape key starts tutorial instead of closing
+    if (tutorialIntroDialog) {
+        tutorialIntroDialog.addEventListener('cancel', (e) => {
+            e.preventDefault(); // Prevent default close behavior
+            tutorialIntroStartBtn.click(); // Trigger start button instead
+        });
+    }
+
+    // Tutorial complete - advance to main game
+    function advanceFromTutorialComplete() {
         // Start a new level after tutorial
         init(false); // Keep streak, start new puzzle at current size
+    }
+
+    // Tutorial complete - continue button
+    const tutorialCompleteBtn = document.getElementById('tutorialCompleteBtn');
+    tutorialCompleteBtn.onclick = () => {
+        ChipSound.click();
+        tutorialCompleteDialog.close();
+        advanceFromTutorialComplete();
     };
+
+    // Tutorial complete - advance on any dismissal (Escape, backdrop click, etc.)
+    if (tutorialCompleteDialog) {
+        // Handle Escape key
+        tutorialCompleteDialog.addEventListener('cancel', (e) => {
+            e.preventDefault(); // Prevent default close behavior
+            tutorialCompleteDialog.close();
+            advanceFromTutorialComplete();
+        });
+    }
 
     // User tutorial complete - continue button
     const userTutorialCompleteDialog = document.getElementById('userTutorialCompleteDialog');
-    document.getElementById('userTutorialCompleteBtn').onclick = () => {
+    const userTutorialCompleteBtn = document.getElementById('userTutorialCompleteBtn');
+    userTutorialCompleteBtn.onclick = () => {
         ChipSound.click();
         userTutorialCompleteDialog.close();
-        // Start a new level after tutorial
-        init(false); // Keep streak, start new puzzle at current size
+        advanceFromTutorialComplete();
     };
+
+    // User tutorial complete - advance on any dismissal
+    if (userTutorialCompleteDialog) {
+        // Handle Escape key
+        userTutorialCompleteDialog.addEventListener('cancel', (e) => {
+            e.preventDefault(); // Prevent default close behavior
+            userTutorialCompleteDialog.close();
+            advanceFromTutorialComplete();
+        });
+    }
 
     // Data vault intro - skip button
     document.getElementById('dataVaultSkipBtn').onclick = () => {
@@ -6933,7 +8354,8 @@ window.onload = () => {
     document.getElementById('dataVaultTutorialBtn').onclick = () => {
         ChipSound.click();
         dataVaultIntroDialog.close();
-        startTutorial(true); // Use current puzzle
+        // Data Vault guided training should be hints-only: no tool hiding/locking, no forced tool switching, no training intro dialog
+        startTutorial(true, { hintsOnly: true }); // Use current puzzle
     };
 
     // Menu tutorial buttons
@@ -6945,6 +8367,27 @@ window.onload = () => {
     document.getElementById('tutorialCurrentBtn').onclick = () => {
         ChipSound.click();
         startTutorial(true); // Current puzzle
+    };
+
+    // Auto tool explanation dialog
+    const autoToolDialog = document.getElementById('autoToolDialog');
+    document.getElementById('autoToolGotItBtn').onclick = () => {
+        ChipSound.click();
+        autoToolDialog.close();
+    };
+
+    // Fork explanation dialog
+    const forkDialog = document.getElementById('forkDialog');
+    document.getElementById('forkGotItBtn').onclick = () => {
+        ChipSound.click();
+        forkDialog.close();
+    };
+
+    // Hint explanation dialog
+    const hintDialog = document.getElementById('hintDialog');
+    document.getElementById('hintGotItBtn').onclick = () => {
+        ChipSound.click();
+        hintDialog.close();
     };
 
     // Level unlocked dialog buttons
@@ -6976,13 +8419,19 @@ window.onload = () => {
     };
 
     // Close dialogs on backdrop click
-    [tutorialIntroDialog, tutorialCompleteDialog, dataVaultIntroDialog, levelUnlockedDialog].forEach(dialog => {
+    [tutorialIntroDialog, tutorialCompleteDialog, dataVaultIntroDialog, levelUnlockedDialog, userTutorialCompleteDialog].forEach(dialog => {
         if (dialog) {
             dialog.addEventListener('click', (e) => {
                 if (e.target === dialog) {
                     // Don't close tutorial intro or level unlocked by clicking backdrop
-                    if (dialog !== tutorialIntroDialog && dialog !== levelUnlockedDialog) {
+                    // Tutorial complete dialogs handle their own dismissal with advance logic
+                    if (dialog !== tutorialIntroDialog && dialog !== levelUnlockedDialog && 
+                        dialog !== tutorialCompleteDialog && dialog !== userTutorialCompleteDialog) {
                         dialog.close();
+                    } else if (dialog === tutorialCompleteDialog || dialog === userTutorialCompleteDialog) {
+                        // Backdrop click on tutorial complete - close and advance
+                        dialog.close();
+                        advanceFromTutorialComplete();
                     }
                 }
             });

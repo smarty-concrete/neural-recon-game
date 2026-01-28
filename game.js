@@ -562,7 +562,10 @@ function seedToNumber(seed) {
 
 function setSeed(seed) {
     currentSeed = seed.toUpperCase();
-    seededRandom = mulberry32(seedToNumber(currentSeed));
+    // For daily puzzles, apply an extra transformation so the same seed
+    // produces a different puzzle than in normal mode
+    const effectiveSeed = isDailyPuzzle ? 'DAILY_MODE_' + currentSeed : currentSeed;
+    seededRandom = mulberry32(seedToNumber(effectiveSeed));
     updateSeedDisplay();
 }
 
@@ -626,19 +629,35 @@ function isProgressIndicatorsEnabled() {
     return assistSettings.enabled && assistSettings.visualHints.enabled && assistSettings.visualHints.progressIndicators;
 }
 function isHintsEnabled() {
+    // Hints are disabled in daily puzzle mode
+    if (isDailyPuzzle) return false;
     return assistSettings.enabled && assistSettings.visualHints.enabled && assistSettings.visualHints.hintsEnabled;
 }
 function isDeadEndFillEnabled() {
+    // Auto-fill is disabled in daily puzzle mode
+    if (isDailyPuzzle) return false;
     return assistSettings.enabled && assistSettings.autoFill.enabled && assistSettings.autoFill.deadEndFill;
 }
 function isWallCompletionEnabled() {
+    // Auto-fill is disabled in daily puzzle mode
+    if (isDailyPuzzle) return false;
     return assistSettings.enabled && assistSettings.autoFill.enabled && assistSettings.autoFill.wallCompletion;
 }
 function isPathCompletionEnabled() {
+    // Auto-fill is disabled in daily puzzle mode
+    if (isDailyPuzzle) return false;
     return assistSettings.enabled && assistSettings.autoFill.enabled && assistSettings.autoFill.pathCompletion;
 }
 function isApplyHintsEnabled() {
+    // Auto-fill is disabled in daily puzzle mode
+    if (isDailyPuzzle) return false;
     return assistSettings.enabled && assistSettings.autoFill.enabled && assistSettings.autoFill.applyHints && isHintsEnabled();
+}
+
+// Check if solution display (decrypt overlay) is allowed
+function isSolutionDisplayAllowed() {
+    // Solution display is disabled in daily puzzle mode
+    return !isDailyPuzzle;
 }
 
 function saveUndoState() {
@@ -682,8 +701,8 @@ function updateButtonStates() {
         addLayerBtn.disabled = currentIdx >= 3;
     }
 
-    // Disable Initialize during first tutorial (not user-initiated)
-    if (isTutorialMode && !isUserInitiatedTutorial) {
+    // Disable Initialize during first tutorial (not user-initiated) or during daily puzzle (unless won)
+    if ((isTutorialMode && !isUserInitiatedTutorial) || (isDailyPuzzle && !isWon)) {
         newMazeBtn.disabled = true;
     } else {
         newMazeBtn.disabled = false;
@@ -960,6 +979,452 @@ const GameState = (() => {
     return { save, load, clear, hasSavedGame };
 })();
 
+// ============================================
+// DAILY PUZZLE SYSTEM
+// ============================================
+let isDailyPuzzle = false;
+const DAILY_PUZZLE_SIZE = 8;
+let cachedServerDate = null; // Cache the server date to avoid repeated requests
+
+// Fetch the server date from the HTTP Date header
+// Returns a promise that resolves to the date string (e.g., "28 Jan 2026")
+async function fetchServerDate() {
+    try {
+        // Make a HEAD request to get the Date header without downloading content
+        const response = await fetch(window.location.href, { method: 'HEAD' });
+        const dateHeader = response.headers.get('Date');
+        if (dateHeader) {
+            // Date header format: "Wed, 28 Jan 2026 15:01:32 GMT"
+            // Extract just the date portion: "28 Jan 2026"
+            const match = dateHeader.match(/\d{1,2}\s+\w{3}\s+\d{4}/);
+            if (match) {
+                return match[0];
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to fetch server date:', e);
+    }
+    // Return null if server date unavailable - daily puzzles will be disabled
+    return null;
+}
+
+// Get today's date string - uses cached value if available
+// Returns a promise that resolves to the date string (e.g., "28 Jan 2026")
+async function getDailyDateString() {
+    if (!cachedServerDate) {
+        cachedServerDate = await fetchServerDate();
+    }
+    return cachedServerDate;
+}
+
+// Synchronous version for use in storage checks (uses cached value only)
+// Returns null if server date hasn't been fetched yet
+function getDailyDateStringSync() {
+    return cachedServerDate;
+}
+
+// Generate a deterministic seed from the date string
+function generateDailySeed(dateString) {
+    // Create a hash-based seed from the date string
+    let hash = 0;
+    const prefix = 'DAILY_';
+    const input = prefix + dateString;
+    for (let i = 0; i < input.length; i++) {
+        hash = ((hash << 5) - hash) + input.charCodeAt(i);
+        hash = hash & hash;
+    }
+    // Convert to 6-character alphanumeric seed
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let seed = '';
+    let n = Math.abs(hash);
+    for (let i = 0; i < 6; i++) {
+        seed += chars[n % chars.length];
+        n = Math.floor(n / chars.length) + (hash >> (i * 4));
+        n = Math.abs(n);
+    }
+    return seed;
+}
+
+// Daily puzzle state storage
+const DailyPuzzleState = (() => {
+    const STORAGE_KEY = 'neuralReconDailyPuzzle';
+
+    function save(dateString, completed, state, completionStats = null) {
+        const data = {
+            dateString,
+            completed,
+            state,
+            completionStats
+        };
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        } catch (e) {
+            console.warn('Failed to save daily puzzle state:', e);
+        }
+    }
+
+    function load() {
+        try {
+            const saved = localStorage.getItem(STORAGE_KEY);
+            if (saved) {
+                return JSON.parse(saved);
+            }
+        } catch (e) {
+            console.warn('Failed to load daily puzzle state:', e);
+        }
+        return null;
+    }
+
+    function clear() {
+        try {
+            localStorage.removeItem(STORAGE_KEY);
+        } catch (e) {
+            console.warn('Failed to clear daily puzzle state:', e);
+        }
+    }
+
+    function isCompletedToday(dateString) {
+        const data = load();
+        if (!data) return false;
+        return data.dateString === dateString && data.completed;
+    }
+
+    function getProgressForToday(dateString) {
+        const data = load();
+        if (!data) return null;
+        if (data.dateString !== dateString) return null;
+        return data;
+    }
+
+    function saveProgress() {
+        if (!isDailyPuzzle || isWon) return;
+        // Use sync version - by the time we're saving, we should have the cached date
+        const dateString = getDailyDateStringSync();
+        if (!dateString) return; // Can't save without valid date
+
+        const currentSessionTime = gameStartTime ? Date.now() - gameStartTime : 0;
+        const totalElapsed = elapsedTimeBeforePause + currentSessionTime;
+
+        const state = {
+            SIZE,
+            currentSeed,
+            solution,
+            layers,
+            currentIdx,
+            targets,
+            lockedWalls,
+            forkAnchors,
+            stockpilePos,
+            undoState,
+            elapsedTime: totalElapsed,
+            moveCount,
+            drawingMode
+        };
+
+        save(dateString, false, state, null);
+    }
+
+    function markCompleted(elapsedTime, moves) {
+        // Use sync version - by the time we complete, we should have the cached date
+        const dateString = getDailyDateStringSync();
+        if (!dateString) return; // Can't mark complete without valid date
+        const data = load();
+        const state = data?.state || null;
+        save(dateString, true, state, { elapsedTime, moves });
+    }
+
+    function getCompletionStats() {
+        const data = load();
+        if (!data || !data.completed) return null;
+        return data.completionStats;
+    }
+
+    return { save, load, clear, isCompletedToday, getProgressForToday, saveProgress, markCompleted, getCompletionStats };
+})();
+
+// Start the daily puzzle
+async function startDailyPuzzle() {
+    closeMenu();
+    
+    // Fetch the server date first (this will cache it for subsequent use)
+    const dateString = await getDailyDateString();
+    
+    // If server date couldn't be fetched, show error and prevent daily puzzle
+    if (!dateString) {
+        ChipSound.error();
+        showHintToast('Daily puzzle unavailable. Could not sync date with server.');
+        return;
+    }
+    
+    // Check if already completed today
+    if (DailyPuzzleState.isCompletedToday(dateString)) {
+        showDailyPuzzleComplete();
+        return;
+    }
+    
+    // Save regular game state before switching to daily puzzle (if not already in daily mode)
+    if (!isDailyPuzzle && hasCompletedTutorial && !isTutorialMode && !isWon) {
+        GameState.save();
+    }
+    
+    isDailyPuzzle = true;
+
+    // Check if we have saved progress for today
+    const todayProgress = DailyPuzzleState.getProgressForToday(dateString);
+    
+    if (todayProgress && todayProgress.state) {
+        // Restore saved progress
+        restoreDailyPuzzleState(todayProgress.state);
+    } else {
+        // Start fresh daily puzzle
+        const seed = generateDailySeed(dateString);
+        
+        // Set to 8x8 and generate puzzle with daily seed
+        document.getElementById('gridSizeSelect').value = String(DAILY_PUZZLE_SIZE);
+        init(true, seed);
+    }
+
+    // Update header to show daily puzzle mode
+    updateDailyPuzzleUI(true);
+}
+
+// Restore daily puzzle from saved state
+function restoreDailyPuzzleState(state) {
+    isWon = false;
+    document.getElementById('victoryOverlay').classList.remove('visible');
+
+    SIZE = state.SIZE;
+    currentSeed = state.currentSeed;
+    solution = state.solution;
+    layers = state.layers;
+    currentIdx = state.currentIdx;
+    targets = state.targets;
+    lockedWalls = (state.lockedWalls && state.lockedWalls.length === SIZE * SIZE)
+        ? state.lockedWalls
+        : findLockedWallsForAmbiguousSolutions();
+    forkAnchors = state.forkAnchors;
+    stockpilePos = state.stockpilePos;
+    undoState = state.undoState;
+    elapsedTimeBeforePause = state.elapsedTime || 0;
+    gameStartTime = Date.now();
+    moveCount = state.moveCount || 0;
+    if (state.drawingMode) {
+        drawingMode = state.drawingMode;
+        document.querySelectorAll('.mode-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === drawingMode);
+        });
+    }
+
+    document.getElementById('gridSizeSelect').value = SIZE;
+    scheduleLayoutUpdate();
+    updateSeedDisplay();
+    addToSeedHistory(currentSeed);
+    document.getElementById('undoBtn').disabled = undoState === null;
+    updateButtonStates();
+    render();
+}
+
+// Exit daily puzzle mode and return to normal game
+function exitDailyPuzzle() {
+    isDailyPuzzle = false;
+    updateDailyPuzzleUI(false);
+    
+    // Try to restore saved regular game state, otherwise start new game
+    const savedState = GameState.load();
+    if (savedState) {
+        restoreGameState(savedState);
+    } else {
+        const maxUnlocked = getMaxUnlockedSize();
+        document.getElementById('gridSizeSelect').value = String(maxUnlocked);
+        init(true);
+    }
+}
+
+// Update UI to show daily puzzle mode
+function updateDailyPuzzleUI(active) {
+    const headerStrip = document.querySelector('.header-strip');
+    if (active) {
+        headerStrip?.classList.add('daily-puzzle-mode');
+        // Turn off solution display when entering daily mode
+        if (showKey) {
+            showKey = false;
+            const btn = document.getElementById('decryptToggleBtn');
+            const state = document.getElementById('decryptToggleState');
+            if (btn) btn.classList.add('off');
+            if (state) {
+                state.textContent = 'OFF';
+                state.classList.add('off-state');
+            }
+        }
+    } else {
+        headerStrip?.classList.remove('daily-puzzle-mode');
+    }
+    
+    // Update visibility of restricted elements
+    updateDailyPuzzleRestrictions(active);
+    
+    // Update button states (Initialize button is disabled during daily puzzle)
+    updateButtonStates();
+}
+
+// Update visibility of features restricted in daily puzzle mode
+function updateDailyPuzzleRestrictions(active) {
+    // Elements to hide in daily puzzle mode:
+    // - Hints tool button and mode
+    // - Decrypt overlay toggle (Display Solution)
+    // - Auto-fill settings section
+    // - Seed section
+    
+    const hintBtn = document.getElementById('hintBtn');
+    const modeHint = document.getElementById('modeHint');
+    const decryptToggleBtn = document.getElementById('decryptToggleBtn');
+    const autoFillSection = document.getElementById('autoFillSection');
+    const hintsEnabledBtn = document.getElementById('hintsEnabledBtn');
+    const applyHintsBtn = document.getElementById('applyHintsBtn');
+    const seedSection = document.getElementById('seedSection');
+    const seedDivider = document.getElementById('seedDivider');
+    const dailyPuzzleBtn = document.getElementById('dailyPuzzleBtn');
+    const dailyPuzzleLabel = dailyPuzzleBtn?.querySelector('.menu-item-label');
+    
+    if (active) {
+        // Hide restricted elements
+        if (hintBtn) hintBtn.style.display = 'none';
+        if (modeHint) modeHint.style.display = 'none';
+        if (decryptToggleBtn) decryptToggleBtn.style.display = 'none';
+        if (autoFillSection) autoFillSection.style.display = 'none';
+        if (hintsEnabledBtn) hintsEnabledBtn.style.display = 'none';
+        if (applyHintsBtn) applyHintsBtn.style.display = 'none';
+        if (seedSection) seedSection.style.display = 'none';
+        if (seedDivider) seedDivider.style.display = 'none';
+        
+        // Change Daily Puzzle button to "Return to Game"
+        if (dailyPuzzleLabel) dailyPuzzleLabel.textContent = '🎮 Return to Game';
+        if (dailyPuzzleBtn) dailyPuzzleBtn.classList.remove('menu-item-highlight');
+        
+        // If currently in hint mode, switch to smart mode
+        if (drawingMode === 'hint') {
+            drawingMode = 'smart';
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.mode === 'smart');
+            });
+        }
+    } else {
+        // Restore visibility (respect other settings)
+        if (decryptToggleBtn) decryptToggleBtn.style.display = '';
+        if (autoFillSection) autoFillSection.style.display = '';
+        if (hintsEnabledBtn) hintsEnabledBtn.style.display = '';
+        if (seedSection) seedSection.style.display = '';
+        if (seedDivider) seedDivider.style.display = '';
+        
+        // Restore Daily Puzzle button
+        if (dailyPuzzleLabel) dailyPuzzleLabel.textContent = '📅 Daily Puzzle';
+        if (dailyPuzzleBtn) dailyPuzzleBtn.classList.add('menu-item-highlight');
+        
+        // Hints and applyHints visibility depends on hintsEnabled setting
+        updateHintVisibility();
+    }
+}
+
+// Show daily puzzle completion dialog
+function showDailyPuzzleComplete() {
+    const dialog = document.getElementById('dailyCompleteDialog');
+    if (!dialog) return;
+
+    const stats = DailyPuzzleState.getCompletionStats();
+    const dateEl = document.getElementById('dailyCompleteDate');
+    const timeEl = document.getElementById('dailyCompleteTime');
+    const movesEl = document.getElementById('dailyCompleteMoves');
+
+    // Use sync version - by the time we show completion, we should have the cached date
+    const dateString = getDailyDateStringSync();
+    if (dateEl) dateEl.textContent = dateString || 'Unknown';
+    if (timeEl) timeEl.textContent = stats ? formatTime(stats.elapsedTime) : '--:--';
+    if (movesEl) movesEl.textContent = stats ? stats.moves : '--';
+
+    dialog.showModal();
+}
+
+// Generate shareable text for daily puzzle completion
+function generateDailyShareText() {
+    const stats = DailyPuzzleState.getCompletionStats();
+    const dateString = getDailyDateStringSync() || 'Unknown';
+    
+    if (!stats) return null;
+    
+    const time = formatTime(stats.elapsedTime);
+    const moves = stats.moves;
+    
+    // Generate a visual representation based on performance
+    // Time rating: ⚡ for fast, 🕐 for medium, 🐢 for slow
+    const timeMs = stats.elapsedTime;
+    let timeRating;
+    if (timeMs < 60000) timeRating = '⚡'; // Under 1 min
+    else if (timeMs < 180000) timeRating = '🕐'; // Under 3 min
+    else if (timeMs < 300000) timeRating = '⏱️'; // Under 5 min
+    else timeRating = '🐢';
+    
+    // Move rating: fewer moves = more stars
+    let moveRating;
+    if (moves <= 30) moveRating = '⭐⭐⭐';
+    else if (moves <= 50) moveRating = '⭐⭐';
+    else if (moves <= 80) moveRating = '⭐';
+    else moveRating = '✓';
+    
+    // Create grid visualization (8x8 = 64 cells, show as pattern)
+    const gridEmojis = ['🟦', '🟩', '⬛', '🟨'];
+    let gridPattern = '';
+    // Use the date as seed for consistent pattern
+    let patternSeed = 0;
+    for (let i = 0; i < dateString.length; i++) {
+        patternSeed = ((patternSeed << 5) - patternSeed) + dateString.charCodeAt(i);
+    }
+    // Generate 2 rows of 8 emojis based on performance
+    for (let row = 0; row < 2; row++) {
+        for (let col = 0; col < 8; col++) {
+            const idx = (Math.abs(patternSeed + row * 8 + col + moves + Math.floor(timeMs / 1000))) % gridEmojis.length;
+            gridPattern += gridEmojis[idx];
+        }
+        if (row === 0) gridPattern += '\n';
+    }
+    
+    const shareText = `Neural Recon Terminal ${dateString}
+Time: ${time}
+Moves: ${moves}`;
+    
+    return shareText;
+}
+
+// Copy daily puzzle stats to clipboard
+async function shareDailyPuzzle() {
+    const shareText = generateDailyShareText();
+    if (!shareText) {
+        ChipSound.error();
+        return false;
+    }
+    
+    try {
+        await navigator.clipboard.writeText(shareText);
+        ChipSound.click();
+        
+        // Update button to show copied feedback
+        const shareBtn = document.getElementById('dailyShareBtn');
+        if (shareBtn) {
+            const originalText = shareBtn.textContent;
+            shareBtn.textContent = 'Copied!';
+            shareBtn.classList.add('btn-copied');
+            setTimeout(() => {
+                shareBtn.textContent = originalText;
+                shareBtn.classList.remove('btn-copied');
+            }, 2000);
+        }
+        return true;
+    } catch (err) {
+        console.error('Failed to copy:', err);
+        ChipSound.error();
+        return false;
+    }
+}
+
 // Flavor text generator - uses theme if available, falls back to cyberpunk defaults
 const defaultBabble = {
     prefixes: ['Quantum', 'Neural', 'Synaptic', 'Crypto', 'Hyper', 'Meta', 'Nano', 'Cyber', 'Proto', 'Flux'],
@@ -986,6 +1451,13 @@ function init(resetStreak = true, specificSeed = null) {
     isWon = false;
     document.getElementById('victoryOverlay').classList.remove('visible');
     ChipSound.newGame();
+    
+    // If we're not in daily puzzle mode (starting a regular game), reset the flag
+    // This handles the case where user starts a new regular game from the menu
+    if (!isDailyPuzzle) {
+        updateDailyPuzzleUI(false);
+    }
+    
     // Reset stats for new game
     gameStartTime = Date.now();
     elapsedTimeBeforePause = 0;
@@ -3368,8 +3840,8 @@ function update() {
             }
         }
 
-        // Render answer key overlay if enabled
-        if (showKey && solution[r][c] === 1) {
+        // Render answer key overlay if enabled (not allowed in daily puzzle mode)
+        if (showKey && isSolutionDisplayAllowed() && solution[r][c] === 1) {
             const keyOverlay = document.createElement('div');
             keyOverlay.className = 'answer-key-overlay';
             cell.appendChild(keyOverlay);
@@ -3436,7 +3908,11 @@ function update() {
     updateButtonStates();
 
     // Save game state after each update
-    GameState.save();
+    if (isDailyPuzzle) {
+        DailyPuzzleState.saveProgress();
+    } else {
+        GameState.save();
+    }
 }
 
 function getPathOrder() {
@@ -3618,10 +4094,19 @@ function triggerVictorySequence() {
                 return;
             }
 
-            // Update stats
-            winStreak++;
+            // Calculate elapsed time
             const currentSessionTime = gameStartTime ? Date.now() - gameStartTime : 0;
             const elapsed = elapsedTimeBeforePause + currentSessionTime;
+
+            // Daily puzzle mode: show daily complete dialog and return to main game
+            if (isDailyPuzzle) {
+                DailyPuzzleState.markCompleted(elapsed, moveCount);
+                showDailyPuzzleComplete();
+                return;
+            }
+
+            // Update stats
+            winStreak++;
             document.getElementById('statTime').textContent = formatTime(elapsed);
             document.getElementById('statMoves').textContent = moveCount;
             document.getElementById('statStreak').textContent = winStreak;
@@ -3754,7 +4239,14 @@ document.getElementById('gridSizeSelect').onchange = () => {
     }
 
     confirmReset(
-        () => init(true),
+        () => {
+            // Exit daily puzzle mode if active (changing size means starting regular game)
+            if (isDailyPuzzle) {
+                isDailyPuzzle = false;
+                updateDailyPuzzleUI(false);
+            }
+            init(true);
+        },
         () => { select.value = previousSize; }
     );
 };
@@ -3807,8 +4299,19 @@ document.getElementById('newMazeBtn').onclick = () => {
         return;
     }
     
+    // Block Initialize during daily puzzle mode (can only exit via menu or after winning)
+    if (isDailyPuzzle && !isWon) {
+        ChipSound.error();
+        return;
+    }
+    
     // If puzzle is won, behave like "Initialize Next Sequence" (no confirmation, keep streak)
     if (isWon) {
+        // For daily puzzle mode, exit and go back to regular game
+        if (isDailyPuzzle) {
+            exitDailyPuzzle();
+            return;
+        }
         init(false);
         return;
     }
@@ -3827,11 +4330,17 @@ document.getElementById('newMazeBtn').onclick = () => {
             });
             endTutorial();
         }
+        
         init(true);
     });
 };
 document.getElementById('nextLevelBtn').onclick = () => init(false);
 document.getElementById('decryptToggleBtn').onclick = () => {
+    // Block in daily puzzle mode
+    if (!isSolutionDisplayAllowed()) {
+        ChipSound.error();
+        return;
+    }
     ChipSound.click();
     showKey = !showKey;
     const btn = document.getElementById('decryptToggleBtn');
@@ -8123,6 +8632,8 @@ function showTutorialComplete() {
 
 // Show data vault intro dialog
 function showDataVaultIntro() {
+    // Don't show tutorial during daily puzzle mode
+    if (isDailyPuzzle) return;
     if (hasSeenDataVaultIntro) return;
 
     hasSeenDataVaultIntro = true;
@@ -8236,14 +8747,22 @@ window.onload = () => {
     // Save game state when page is about to unload (only if tutorial completed)
     window.addEventListener('beforeunload', () => {
         if (hasCompletedTutorial && !isTutorialMode) {
-            GameState.save();
+            if (isDailyPuzzle) {
+                DailyPuzzleState.saveProgress();
+            } else {
+                GameState.save();
+            }
         }
     });
 
     // Also save periodically and after state changes via visibilitychange
     document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden' && hasCompletedTutorial && !isTutorialMode) {
-            GameState.save();
+            if (isDailyPuzzle) {
+                DailyPuzzleState.saveProgress();
+            } else {
+                GameState.save();
+            }
         }
     });
 
@@ -8492,4 +9011,57 @@ window.onload = () => {
             });
         }
     });
+
+    // Daily puzzle button handler - acts as toggle between daily and normal modes
+    document.getElementById('dailyPuzzleBtn').onclick = () => {
+        ChipSound.click();
+        if (isDailyPuzzle) {
+            // Return to regular game
+            closeMenu();
+            exitDailyPuzzle();
+        } else {
+            // Start daily puzzle
+            startDailyPuzzle();
+        }
+    };
+
+    // Daily puzzle complete dialog handler
+    const dailyCompleteDialog = document.getElementById('dailyCompleteDialog');
+    document.getElementById('dailyCompleteBtn').onclick = () => {
+        ChipSound.click();
+        dailyCompleteDialog.close();
+        exitDailyPuzzle();
+    };
+    
+    // Daily puzzle share button handler
+    document.getElementById('dailyShareBtn').onclick = () => {
+        shareDailyPuzzle();
+    };
+
+    // Handle Escape and backdrop click on daily complete dialog
+    if (dailyCompleteDialog) {
+        dailyCompleteDialog.addEventListener('cancel', (e) => {
+            e.preventDefault();
+            dailyCompleteDialog.close();
+            exitDailyPuzzle();
+        });
+
+        dailyCompleteDialog.addEventListener('click', (e) => {
+            if (e.target === dailyCompleteDialog) {
+                dailyCompleteDialog.close();
+                exitDailyPuzzle();
+            }
+        });
+    }
+
+    // Check for daily puzzle URL parameter
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.has('daily') || urlParams.get('mode') === 'daily') {
+        // Delay to ensure game is initialized first
+        setTimeout(() => {
+            if (hasCompletedTutorial) {
+                startDailyPuzzle();
+            }
+        }, 100);
+    }
 };

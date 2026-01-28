@@ -432,6 +432,10 @@
                 <button id="menuCloseBtn" class="menu-close-btn">✕</button>
             </div>
             <div class="menu-items">
+                <button id="dailyPuzzleBtn" class="menu-item menu-item-highlight">
+                    <span class="menu-item-label">📅 Daily Puzzle</span>
+                </button>
+                <div class="menu-divider"></div>
                 <button id="briefingBtn" class="menu-item">
                     <span class="menu-item-label">Briefing</span>
                 </button>
@@ -482,7 +486,7 @@
                             </div>
                         </div>
                         <!-- Auto-fill Sub-section -->
-                        <div class="menu-expand-section nested">
+                        <div id="autoFillSection" class="menu-expand-section nested">
                             <button id="autoFillBtn" class="menu-item menu-toggle menu-expand-header">
                                 <span class="menu-expand-icon">▶</span>
                                 <span class="menu-item-label">Auto-fill</span>
@@ -511,9 +515,9 @@
                 </div>
             </div>
             <div class="menu-footer">
-                <div class="menu-divider"></div>
+                <div id="seedDivider" class="menu-divider"></div>
                 <!-- Seed Section -->
-                <div class="seed-section">
+                <div id="seedSection" class="seed-section">
                     <div class="seed-current">
                         <span class="seed-label">Seed:</span>
                         <span id="currentSeed" class="seed-value">------</span>
@@ -1035,6 +1039,35 @@
             </div>
             <div class="tutorial-dialog-buttons">
                 <button id="hintGotItBtn" class="cyber-btn btn-action">Got It</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Daily Puzzle Complete Dialog -->
+    <dialog id="dailyCompleteDialog" class="tutorial-dialog tutorial-complete">
+        <div class="tutorial-dialog-content">
+            <div class="tutorial-dialog-title">📅 DAILY PUZZLE COMPLETE</div>
+            <div class="tutorial-dialog-body">
+                <p class="tutorial-success">Today's neural pathway secured!</p>
+                <div class="daily-complete-stats">
+                    <div class="stat-row">
+                        <span class="stat-label">Date:</span>
+                        <span id="dailyCompleteDate" class="stat-value">--</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Time:</span>
+                        <span id="dailyCompleteTime" class="stat-value">--:--</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Moves:</span>
+                        <span id="dailyCompleteMoves" class="stat-value">--</span>
+                    </div>
+                </div>
+                <p class="tutorial-techno">Daily encryption sequence verified.<br>Return tomorrow for the next challenge.</p>
+            </div>
+            <div class="tutorial-dialog-buttons daily-complete-buttons">
+                <button id="dailyShareBtn" class="cyber-btn btn-share">Share</button>
+                <button id="dailyCompleteBtn" class="cyber-btn btn-action">Continue</button>
             </div>
         </div>
     </dialog>

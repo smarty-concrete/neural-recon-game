@@ -1,9 +1,9 @@
-﻿{
+{
   "name": "Neural Recon Terminal",
   "short_name": "Neural Recon",
   "description": "A cyberpunk puzzle game - find the hidden path through the grid",
-  "start_url": ".",
-  "scope": ".",
+  "start_url": "./index.html",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#050506",

@@ -1,7 +1,7 @@
 ﻿// Determine the base path dynamically from the service worker's location
 const BASE_PATH = self.location.pathname.substring(0, self.location.pathname.lastIndexOf('/') + 1);
 
-const CACHE_NAME = 'neural-recon-v0.0.0';
+const CACHE_NAME = 'neural-recon-v1.2.0';
 const ASSETS_TO_CACHE = [
   BASE_PATH,
   `${BASE_PATH}index.html`,
